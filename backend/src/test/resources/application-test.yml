@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:marketplace_test;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:8080/realms/marketplace-realm/protocol/openid-connect/certs
+
+storage:
+  s3:
+    endpoint: http://localhost:9000
+    region: ap-south-1
+    access-key: test-access-key
+    secret-key: test-secret-key
+    bucket-name: test-private-bucket
+
+payment:
+  operations:
+    enabled: true
+    production-approved: false
+    sandbox-only: true
+  razorpay:
+    key-id: rzp_test_key-id
+    key-secret: test-key-secret
+    webhook-secret: test-webhook-secret
+    api-base-url: http://localhost:18080/v1
+
+security:
+  otp:
+    secret: test-otp-secret

@@ -1,0 +1,111 @@
+services:
+  # ==========================================
+  # 1. MySQL 8.4 LTS Database
+  # ==========================================
+  mysql:
+    image: mysql:8.4.0
+    container_name: marketplace-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_secret_password
+      MYSQL_DATABASE: marketplace_dev
+      MYSQL_USER: marketplace_user
+      MYSQL_PASSWORD: marketplace_secret
+    ports:
+      - "${MYSQL_HOST_PORT:-3306}:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "marketplace_user", "-pmarketplace_secret"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # 2. Keycloak 25.0 IAM (OIDC & PKCE)
+  # ==========================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    container_name: marketplace-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_password
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/marketplace-realm.json:/opt/keycloak/data/import/marketplace-realm.json:ro
+      - keycloak_data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # ==========================================
+  # 3. MinIO (local S3-compatible Object Storage)
+  # ==========================================
+  minio:
+    image: bitnamilegacy/minio:2024.8.3-debian-12-r0
+    container_name: marketplace-minio
+    restart: unless-stopped
+    command: ["/opt/bitnami/scripts/minio/run.sh"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:4200
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Auto-create buckets in MinIO on start
+  minio-init:
+    image: bitnamilegacy/minio:2024.8.3-debian-12-r0
+    container_name: marketplace-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /opt/bitnami/minio-client/bin/mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        /opt/bitnami/minio-client/bin/mc mb myminio/marketplace-media --ignore-existing
+        /opt/bitnami/minio-client/bin/mc mb myminio/marketplace-private --ignore-existing
+        /opt/bitnami/minio-client/bin/mc anonymous set download myminio/marketplace-media/public
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+
+  # ==========================================
+  # 4. Mailpit (Local SMTP Server & Web UI)
+  # ==========================================
+  mailpit:
+    image: axllent/mailpit:v1.18.2
+    container_name: marketplace-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP port
+      - "8025:8025" # Web UI
+    volumes:
+      - mailpit_data:/data
+
+volumes:
+  mysql_data:
+  keycloak_data:
+  minio_data:
+  mailpit_data:

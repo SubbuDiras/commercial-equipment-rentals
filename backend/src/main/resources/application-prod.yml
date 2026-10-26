@@ -1,0 +1,43 @@
+server:
+  forward-headers-strategy: framework
+
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI}
+
+management:
+  server:
+    port: ${MANAGEMENT_PORT:8082}
+
+storage:
+  s3:
+    endpoint: ${S3_ENDPOINT}
+    region: ${S3_REGION}
+    access-key: ${S3_ACCESS_KEY}
+    secret-key: ${S3_SECRET_KEY}
+    bucket-name: ${S3_PRIVATE_BUCKET}
+
+payment:
+  operations:
+    enabled: ${PAYMENT_OPERATIONS_ENABLED}
+    production-approved: ${PAYMENT_PRODUCTION_APPROVED}
+    sandbox-only: ${PAYMENT_SANDBOX_ONLY}
+  razorpay:
+    key-id: ${RAZORPAY_KEY_ID}
+    key-secret: ${RAZORPAY_KEY_SECRET}
+    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}
+
+security:
+  otp:
+    secret: ${OTP_SECRET}
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}

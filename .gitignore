@@ -1,0 +1,29 @@
+# Secrets and local environment files (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local tooling (Node version manager install)
+tools/nvm/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+
+# Backend
+backend/build/
+backend/target/
+backend/.gradle/
+backend/backend/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

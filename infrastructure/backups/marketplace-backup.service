@@ -1,0 +1,12 @@
+[Unit]
+Description=Encrypted Marketplace database and object-storage backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=marketplace-backup
+Group=marketplace-backup
+EnvironmentFile=/etc/marketplace/backup.env
+ExecStart=/opt/marketplace/backups/backup.sh
+UMask=0077

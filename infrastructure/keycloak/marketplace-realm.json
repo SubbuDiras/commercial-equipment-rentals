@@ -1,0 +1,124 @@
+{
+  "id": "marketplace-realm",
+  "realm": "marketplace-realm",
+  "displayName": "Equipment Rental Marketplace",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "ROLE_RENTER",
+        "description": "Standard business renter role for booking commercial equipment"
+      },
+      {
+        "name": "ROLE_OWNER",
+        "description": "Equipment owner role for managing listings and approvals"
+      },
+      {
+        "name": "ROLE_ADMIN",
+        "description": "Platform administrator role with full governance authority"
+      },
+      {
+        "name": "ROLE_SUPPORT",
+        "description": "Customer support and dispute arbitration role"
+      }
+    ]
+  },
+  "defaultRoles": [
+    "ROLE_RENTER"
+  ],
+  "clients": [
+    {
+      "clientId": "marketplace-frontend",
+      "name": "Angular Marketplace Single Page Application",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "redirectUris": [
+        "http://localhost:4200/*",
+        "http://localhost:4200"
+      ],
+      "webOrigins": [
+        "http://localhost:4200",
+        "+"
+      ]
+    },
+    {
+      "clientId": "marketplace-backend",
+      "name": "Spring Boot Resource Server",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "renter@example.com",
+      "email": "renter@example.com",
+      "firstName": "Rajesh",
+      "lastName": "Kumar",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password123!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_RENTER"
+      ]
+    },
+    {
+      "username": "owner@example.com",
+      "email": "owner@example.com",
+      "firstName": "Suresh",
+      "lastName": "Patel",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password123!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_RENTER",
+        "ROLE_OWNER"
+      ]
+    },
+    {
+      "username": "admin@example.com",
+      "email": "admin@example.com",
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password123!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_ADMIN"
+      ]
+    }
+  ]
+}
