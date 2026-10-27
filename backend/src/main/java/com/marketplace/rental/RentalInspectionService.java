@@ -4,7 +4,13 @@ import com.marketplace.booking.BookingStatus;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.InvalidStateTransitionException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.notification.NotificationEvent;
+import com.marketplace.notification.NotificationService;
+import com.marketplace.notification.NotificationType;
 import com.marketplace.storage.PrivateObjectStorage;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -32,7 +38,7 @@ import java.util.UUID;
 public class RentalInspectionService {
 
     private static final int OTP_LIFETIME_MINUTES = 15;
-    private static final Duration DISPUTE_WINDOW = Duration.ofHours(24);
+    public static final Duration DISPUTE_WINDOW = Duration.ofHours(24);
     private static final Map<String, String> ALLOWED_CONTENT_TYPES = Map.of(
             "image/jpeg", "jpg",
             "image/png", "png",
@@ -42,22 +48,35 @@ public class RentalInspectionService {
     private final PrivateObjectStorage objectStorage;
     private final OtpProperties otpProperties;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher events;
+    private final NotificationService notificationService;
+    private final boolean exposeOtpCodes;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public RentalInspectionService(
             JdbcTemplate jdbcTemplate,
             PrivateObjectStorage objectStorage,
             OtpProperties otpProperties,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher events,
+            NotificationService notificationService,
+            Environment environment
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectStorage = objectStorage;
         this.otpProperties = otpProperties;
         this.objectMapper = objectMapper;
+        this.events = events;
+        this.notificationService = notificationService;
+        // Outside dev/test the code reaches the counterparty only by email, never in the API response.
+        this.exposeOtpCodes = environment.acceptsProfiles(Profiles.of("dev | test"));
     }
 
     @Transactional
     public OtpChallengeResponse issueOtp(String bookingId, InspectionType type, Jwt jwt) {
+        if (!exposeOtpCodes && !notificationService.enabled()) {
+            throw new ConflictException("Inspection codes cannot be delivered because email notifications are off.");
+        }
         Booking row = lockBooking(bookingId);
         Participant participant = requireParticipant(row, jwt.getSubject());
         validateInspectionWindow(row, type);
@@ -77,7 +96,10 @@ public class RentalInspectionService {
                 UUID.randomUUID().toString(), bookingId, type.name(), participant.userId(),
                 hashOtp(bookingId, type, participant.userId(), code),
                 Timestamp.from(expiresAt));
-        return new OtpChallengeResponse(type.name(), expiresAt, code);
+        boolean emailed = notificationService.enabled();
+        events.publishEvent(NotificationEvent.of(NotificationType.INSPECTION_OTP, bookingId, Map.of(
+                "code", code, "inspectionType", type.name(), "requestedByUserId", participant.userId())));
+        return new OtpChallengeResponse(type.name(), expiresAt, exposeOtpCodes ? code : null, emailed);
     }
 
     @Transactional
@@ -199,7 +221,33 @@ public class RentalInspectionService {
         jdbcTemplate.update("UPDATE bookings SET status = 'DISPUTED' WHERE id = ?", bookingId);
         addStatusHistory(bookingId, BookingStatus.RETURNED, BookingStatus.DISPUTED,
                 owner.userId(), "Damage claim " + disputeId + " submitted.");
+        events.publishEvent(NotificationEvent.of(NotificationType.DISPUTE_OPENED, bookingId, Map.of(
+                "category", request.category(),
+                "claimAmount", request.claimAmount(),
+                "description", request.description())));
         return disputeId;
+    }
+
+    @Transactional
+    public ConditionApprovalResponse approveCondition(String bookingId, Jwt ownerJwt) {
+        Booking row = lockBooking(bookingId);
+        Participant owner = requireParticipant(row, ownerJwt.getSubject());
+        if (!owner.owner()) {
+            throw new AccessDeniedException("Only the equipment owner may approve the returned condition.");
+        }
+        if (row.status() != BookingStatus.RETURNED) {
+            throw new InvalidStateTransitionException(row.status().name(), BookingStatus.INSPECTION_PASSED.name());
+        }
+        Integer openDisputes = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM disputes WHERE booking_id = ? AND status = 'OPEN'", Integer.class, bookingId);
+        if (openDisputes != null && openDisputes > 0) {
+            throw new ConflictException("The booking has an open damage claim.");
+        }
+        jdbcTemplate.update("UPDATE bookings SET status = 'INSPECTION_PASSED' WHERE id = ? AND status = 'RETURNED'",
+                bookingId);
+        addStatusHistory(bookingId, BookingStatus.RETURNED, BookingStatus.INSPECTION_PASSED, owner.userId(),
+                "Owner approved the returned equipment condition.");
+        return new ConditionApprovalResponse(bookingId, BookingStatus.INSPECTION_PASSED.name(), Instant.now());
     }
 
     @Transactional

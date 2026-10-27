@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>The damage claim on this booking has been resolved.</p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p>Approved deduction from the deposit: &#8377;<span th:text="${approvedDeduction}">0</span><br>
+    Deposit refunded to the renter: &#8377;<span th:text="${refundAmount}">0</span></p>
+<p th:if="${resolutionNotes}">Notes: <em th:text="${resolutionNotes}">notes</em></p>
+<p th:replace="~{email/fragments :: bookingLink}"></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

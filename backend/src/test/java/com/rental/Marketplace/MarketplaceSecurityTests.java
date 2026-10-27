@@ -199,6 +199,37 @@ class MarketplaceSecurityTests {
     }
 
     @Test
+    void phaseTwoEndpointsEnforceTheirRoles() throws Exception {
+        var renter = SecurityMockMvcRequestPostProcessors.jwt()
+                .authorities(new SimpleGrantedAuthority("ROLE_RENTER"));
+
+        mockMvc.perform(get("/api/v1/owner/bookings").with(renter))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/owner/rentals/not-a-booking/approve-condition").with(renter))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/admin/disputes").with(renter))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/admin/disputes/not-a-dispute").with(renter))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/v1/admin/owners/not-a-profile/razorpay-account").with(renter)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"linkedAccountId\":\"acc_Valid0000000001\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/owner/onboarding/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void razorpayAccountLinkRejectsMalformedAccountIds() throws Exception {
+        mockMvc.perform(patch("/api/v1/admin/owners/not-a-profile/razorpay-account")
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"linkedAccountId\":\"not-an-account\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void paymentOrderRequiresRenterRole() throws Exception {
         mockMvc.perform(post("/api/v1/bookings/not-a-booking/payment-order"))
                 .andExpect(status().isUnauthorized());

@@ -4,6 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.notification.NotificationEvent;
+import com.marketplace.notification.NotificationType;
+import com.marketplace.user.UserProfileService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -23,10 +28,19 @@ public class OwnerOnboardingService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final UserProfileService userProfileService;
+    private final ApplicationEventPublisher events;
 
-    public OwnerOnboardingService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public OwnerOnboardingService(
+            JdbcTemplate jdbcTemplate,
+            ObjectMapper objectMapper,
+            UserProfileService userProfileService,
+            ApplicationEventPublisher events
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.userProfileService = userProfileService;
+        this.events = events;
     }
 
     @Transactional
@@ -76,6 +90,7 @@ public class OwnerOnboardingService {
             writeAudit(userId, "OWNER_ONBOARDING_SUBMITTED", "owner_profiles", profileId,
                     Map.of("businessType", request.businessType(), "status", OwnerVerificationStatus.UNDER_REVIEW.name()));
 
+            events.publishEvent(NotificationEvent.of(NotificationType.KYC_SUBMITTED, profileId));
             return new OwnerProfileResponse(profileId, OwnerVerificationStatus.UNDER_REVIEW.name(), Instant.now());
         } catch (DataIntegrityViolationException exception) {
             throw new ConflictException("The submitted owner details conflict with an existing account or organization.");
@@ -95,6 +110,70 @@ public class OwnerOnboardingService {
                 """,
                 (resultSet, rowNumber) -> mapReview(resultSet),
                 status.name());
+    }
+
+    @Transactional(readOnly = true)
+    public OwnerProfileDetailsResponse findMine(Jwt jwt) {
+        String userId = userProfileService.findExisting(jwt.getSubject())
+                .orElseThrow(() -> new ResourceNotFoundException("Owner profile not found."));
+        OwnerProfileDetailsResponse profile = jdbcTemplate.query("""
+                        SELECT op.id, op.verification_status, op.business_type, o.legal_name,
+                               op.rejection_reason, op.razorpay_linked_account_id, op.created_at, op.verified_at
+                        FROM owner_profiles op
+                        LEFT JOIN organizations o ON o.id = op.organization_id
+                        WHERE op.user_id = ?
+                        """,
+                resultSet -> {
+                    if (!resultSet.next()) {
+                        return null;
+                    }
+                    Timestamp verifiedAt = resultSet.getTimestamp("verified_at");
+                    String linkedAccount = resultSet.getString("razorpay_linked_account_id");
+                    return new OwnerProfileDetailsResponse(
+                            resultSet.getString("id"),
+                            resultSet.getString("verification_status"),
+                            resultSet.getString("business_type"),
+                            resultSet.getString("legal_name"),
+                            resultSet.getString("rejection_reason"),
+                            linkedAccount != null && !linkedAccount.isBlank(),
+                            resultSet.getTimestamp("created_at").toInstant(),
+                            verifiedAt == null ? null : verifiedAt.toInstant());
+                },
+                userId);
+        if (profile == null) {
+            throw new ResourceNotFoundException("Owner profile not found.");
+        }
+        return profile;
+    }
+
+    @Transactional(readOnly = true)
+    public String findKeycloakSubject(String ownerProfileId) {
+        String subject = jdbcTemplate.query("""
+                        SELECT u.keycloak_subject_id
+                        FROM owner_profiles op JOIN users u ON u.id = op.user_id
+                        WHERE op.id = ?
+                        """,
+                resultSet -> resultSet.next() ? resultSet.getString(1) : null,
+                ownerProfileId);
+        if (subject == null) {
+            throw new ResourceNotFoundException("Owner profile not found.");
+        }
+        return subject;
+    }
+
+    @Transactional
+    public RazorpayAccountResponse linkRazorpayAccount(String ownerProfileId, String linkedAccountId, Jwt adminJwt) {
+        findReview(ownerProfileId);
+        String adminUserId = userProfileService.resolveOrCreate(adminJwt);
+        try {
+            jdbcTemplate.update("UPDATE owner_profiles SET razorpay_linked_account_id = ? WHERE id = ?",
+                    linkedAccountId, ownerProfileId);
+        } catch (DataIntegrityViolationException exception) {
+            throw new ConflictException("The Razorpay linked account id could not be stored.");
+        }
+        writeAudit(adminUserId, "OWNER_RAZORPAY_ACCOUNT_LINKED", "owner_profiles", ownerProfileId,
+                Map.of("linkedAccountId", linkedAccountId, "adminSubject", adminJwt.getSubject()));
+        return new RazorpayAccountResponse(ownerProfileId, linkedAccountId);
     }
 
     @Transactional
@@ -118,7 +197,7 @@ public class OwnerOnboardingService {
             throw new ConflictException("Only owner profiles under review can be approved or rejected.");
         }
 
-        String adminUserId = findUserId(adminJwt.getSubject());
+        String adminUserId = userProfileService.resolveOrCreate(adminJwt);
         int updatedRows;
         if (targetStatus == OwnerVerificationStatus.VERIFIED) {
             updatedRows = jdbcTemplate.update("""
@@ -145,6 +224,9 @@ public class OwnerOnboardingService {
                 ? Map.of("status", targetStatus.name(), "adminSubject", adminJwt.getSubject())
                 : Map.of("status", targetStatus.name(), "adminSubject", adminJwt.getSubject(), "reason", reason);
         writeAudit(adminUserId, "OWNER_VERIFICATION_" + targetStatus.name(), "owner_profiles", ownerProfileId, details);
+        events.publishEvent(targetStatus == OwnerVerificationStatus.VERIFIED
+                ? NotificationEvent.of(NotificationType.KYC_APPROVED, ownerProfileId)
+                : NotificationEvent.of(NotificationType.KYC_REJECTED, ownerProfileId, Map.of("reason", reason)));
         return new OwnerReviewResponse(owner.ownerProfileId(), owner.firstName(), owner.lastName(), owner.email(),
                 owner.businessName(), owner.businessType(), targetStatus.name(), owner.submittedAt());
     }

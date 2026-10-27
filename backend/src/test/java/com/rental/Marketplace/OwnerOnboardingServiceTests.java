@@ -2,7 +2,12 @@ package com.rental.Marketplace;
 
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.keycloak.KeycloakAdminClient;
+import com.marketplace.keycloak.KeycloakAdminException;
+import com.marketplace.owner.OwnerApprovalService;
 import com.marketplace.owner.OwnerDocumentService;
+import com.marketplace.owner.OwnerProfileDetailsResponse;
+import com.marketplace.owner.RazorpayAccountResponse;
 import com.marketplace.owner.OwnerDocumentUploadRequest;
 import com.marketplace.owner.OwnerOnboardingRequest;
 import com.marketplace.owner.OwnerOnboardingService;
@@ -24,6 +29,8 @@ import java.time.Instant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(classes = com.marketplace.MarketplaceApplication.class)
@@ -39,8 +46,14 @@ class OwnerOnboardingServiceTests {
     @Autowired
     private OwnerDocumentService ownerDocumentService;
 
+    @Autowired
+    private OwnerApprovalService ownerApprovalService;
+
     @MockBean
     private PrivateObjectStorage objectStorage;
+
+    @MockBean
+    private KeycloakAdminClient keycloakAdminClient;
 
     @BeforeEach
     void createOwnerSchema() {
@@ -54,7 +67,7 @@ class OwnerOnboardingServiceTests {
                     id CHAR(36) PRIMARY KEY,
                     keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE,
                     email VARCHAR(255) NOT NULL UNIQUE,
-                    phone VARCHAR(20) NOT NULL UNIQUE,
+                    phone VARCHAR(20) UNIQUE,
                     first_name VARCHAR(100) NOT NULL,
                     last_name VARCHAR(100) NOT NULL
                 )
@@ -78,6 +91,7 @@ class OwnerOnboardingServiceTests {
                     bank_account_number VARCHAR(34),
                     bank_ifsc VARCHAR(11),
                     bank_account_holder_name VARCHAR(255),
+                    razorpay_linked_account_id VARCHAR(64),
                     verification_status VARCHAR(30) NOT NULL,
                     rejection_reason VARCHAR(2000),
                     verified_at TIMESTAMP(6),
@@ -152,6 +166,70 @@ class OwnerOnboardingServiceTests {
     }
 
     @Test
+    void returnsTheCallersOwnerProfileOnlyAfterSubmission() {
+        assertThatThrownBy(() -> ownerOnboardingService.findMine(ownerJwt()))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+        OwnerProfileDetailsResponse underReview = ownerOnboardingService.findMine(ownerJwt());
+        assertThat(underReview.ownerProfileId()).isEqualTo(submitted.ownerProfileId());
+        assertThat(underReview.status()).isEqualTo(OwnerVerificationStatus.UNDER_REVIEW.name());
+        assertThat(underReview.businessName()).isEqualTo("Bangalore Tool Rentals");
+        assertThat(underReview.razorpayAccountLinked()).isFalse();
+
+        ownerOnboardingService.reject(submitted.ownerProfileId(), adminJwt(), "Blurry PAN card.");
+        OwnerProfileDetailsResponse rejected = ownerOnboardingService.findMine(ownerJwt());
+        assertThat(rejected.status()).isEqualTo(OwnerVerificationStatus.REJECTED.name());
+        assertThat(rejected.rejectionReason()).isEqualTo("Blurry PAN card.");
+    }
+
+    @Test
+    void approvalGrantsOwnerRoleInKeycloakAfterCommitting() {
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+
+        OwnerReviewResponse approved = ownerApprovalService.approve(submitted.ownerProfileId(), adminJwt());
+
+        assertThat(approved.status()).isEqualTo(OwnerVerificationStatus.VERIFIED.name());
+        assertThat(approved.ownerRoleGranted()).isTrue();
+        assertThat(approved.warning()).isNull();
+        verify(keycloakAdminClient).grantRealmRole("owner-subject", "ROLE_OWNER");
+    }
+
+    @Test
+    void approvalSucceedsWithWarningWhenKeycloakRoleGrantFails() {
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+        doThrow(new KeycloakAdminException("Keycloak admin client is not configured."))
+                .when(keycloakAdminClient).grantRealmRole(anyString(), anyString());
+
+        OwnerReviewResponse approved = ownerApprovalService.approve(submitted.ownerProfileId(), adminJwt());
+
+        assertThat(approved.ownerRoleGranted()).isFalse();
+        assertThat(approved.warning()).contains("ROLE_OWNER", "owner@example.com", "sign in again");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT verification_status FROM owner_profiles WHERE id = ?",
+                String.class,
+                submitted.ownerProfileId())).isEqualTo(OwnerVerificationStatus.VERIFIED.name());
+    }
+
+    @Test
+    void adminLinksRazorpayAccountWithAudit() {
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+
+        RazorpayAccountResponse linked = ownerOnboardingService.linkRazorpayAccount(
+                submitted.ownerProfileId(), "acc_TestLinked0001", adminJwt());
+
+        assertThat(linked.linkedAccountId()).isEqualTo("acc_TestLinked0001");
+        assertThat(ownerOnboardingService.findMine(ownerJwt()).razorpayAccountLinked()).isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ? AND action = 'OWNER_RAZORPAY_ACCOUNT_LINKED'",
+                Integer.class,
+                submitted.ownerProfileId())).isEqualTo(1);
+        assertThatThrownBy(() -> ownerOnboardingService.linkRazorpayAccount(
+                "missing-profile", "acc_TestLinked0001", adminJwt()))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
     void preventsSubmittingASecondOwnerProfileForTheSameAccount() {
         ownerOnboardingService.submit(ownerJwt(), request());
 
@@ -214,6 +292,7 @@ class OwnerOnboardingServiceTests {
         return Jwt.withTokenValue("admin-token")
                 .header("alg", "none")
                 .subject("admin-subject")
+                .claim("email", "admin@example.com")
                 .build();
     }
 }

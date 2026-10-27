@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body>
+<div th:fragment="booking" style="background: #f3f4f6; padding: 12px; margin: 12px 0;">
+    <strong th:text="${booking.equipmentTitle()}">Equipment</strong><br>
+    Booking <span th:text="${booking.reference()}">BKG-000</span><br>
+    <span th:text="${booking.startTime()}">start</span> to <span th:text="${booking.endTime()}">end</span>
+</div>
+<p th:fragment="bookingLink"><a th:href="${bookingUrl}" href="#">Open the booking</a></p>
+<div th:fragment="footer" style="margin-top: 24px; font-size: 12px; color: #6b7280;">
+    <p>Equipment Rental Marketplace &middot; <a th:href="${appUrl}" href="#" th:text="${appUrl}">marketplace</a></p>
+    <p>This is an automated message about your account. Please do not reply.</p>
+</div>
+</body>
+</html>

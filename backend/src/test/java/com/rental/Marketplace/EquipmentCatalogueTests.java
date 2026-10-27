@@ -54,6 +54,7 @@ class EquipmentCatalogueTests {
 
     @BeforeEach
     void createCatalogueSchema() {
+        jdbcTemplate.execute("DROP TABLE IF EXISTS reviews");
         jdbcTemplate.execute("DROP TABLE IF EXISTS bookings");
         jdbcTemplate.execute("DROP TABLE IF EXISTS equipment_images");
         jdbcTemplate.execute("DROP TABLE IF EXISTS audit_logs");
@@ -64,7 +65,11 @@ class EquipmentCatalogueTests {
         jdbcTemplate.execute("""
                 CREATE TABLE users (
                     id CHAR(36) PRIMARY KEY,
-                    keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE
+                    keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE,
+                    email VARCHAR(255),
+                    phone VARCHAR(20),
+                    first_name VARCHAR(100),
+                    last_name VARCHAR(100)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -121,7 +126,22 @@ class EquipmentCatalogueTests {
                     start_time TIMESTAMP(6) NOT NULL,
                     end_time TIMESTAMP(6) NOT NULL,
                     status VARCHAR(30) NOT NULL,
-                    hold_expires_at TIMESTAMP(6)
+                    hold_expires_at TIMESTAMP(6),
+                    renter_user_id CHAR(36)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE reviews (
+                    id CHAR(36) PRIMARY KEY,
+                    booking_id CHAR(36) NOT NULL,
+                    reviewer_user_id CHAR(36) NOT NULL,
+                    reviewee_user_id CHAR(36) NOT NULL,
+                    equipment_id CHAR(36) NOT NULL,
+                    rating INT NOT NULL,
+                    comments CLOB,
+                    is_published BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    UNIQUE (booking_id, reviewer_user_id)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -180,6 +200,25 @@ class EquipmentCatalogueTests {
         assertThat(publicListing.serialNumber()).isNull();
         assertThat(publicListing.addressLine()).isNull();
         assertThat(publicListing.latitude()).isNull();
+        assertThat(publicListing.averageRating()).isNull();
+        assertThat(publicListing.reviewCount()).isZero();
+
+        // Two renter reviews count; the owner's review of a renter does not rate the equipment.
+        jdbcTemplate.update("""
+                INSERT INTO bookings (id, equipment_id, start_time, end_time, status, renter_user_id)
+                VALUES ('rated-1', ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'CLOSED', 'renter-a'),
+                       ('rated-2', ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'CLOSED', 'renter-b')
+                """, draft.id(), draft.id());
+        jdbcTemplate.update("""
+                INSERT INTO reviews (id, booking_id, reviewer_user_id, reviewee_user_id, equipment_id, rating)
+                VALUES ('review-1', 'rated-1', 'renter-a', 'user-1', ?, 5),
+                       ('review-2', 'rated-2', 'renter-b', 'user-1', ?, 4),
+                       ('review-3', 'rated-2', 'user-1', 'renter-b', ?, 1)
+                """, draft.id(), draft.id(), draft.id());
+        EquipmentListingResponse rated = catalogueService.getPublicListing(draft.id());
+        assertThat(rated.averageRating()).isEqualByComparingTo("4.50");
+        assertThat(rated.reviewCount()).isEqualTo(2);
+        assertThat(catalogueService.search(null, null, null, null, 0, 20).content().get(0).reviewCount()).isNull();
     }
 
     @Test
@@ -327,6 +366,7 @@ class EquipmentCatalogueTests {
         return Jwt.withTokenValue("admin-token")
                 .header("alg", "none")
                 .subject("admin-subject")
+                .claim("email", "admin@example.com")
                 .build();
     }
 }

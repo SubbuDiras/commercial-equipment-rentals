@@ -14,7 +14,7 @@ spring:
 
 management:
   server:
-    port: ${MANAGEMENT_PORT:8082}
+    port: ${MANAGEMENT_PORT}
 
 storage:
   s3:
@@ -30,6 +30,8 @@ payment:
     production-approved: ${PAYMENT_PRODUCTION_APPROVED}
     sandbox-only: ${PAYMENT_SANDBOX_ONLY}
   razorpay:
+    # The fake gateway refuses to start under this profile; keep it off.
+    fake: false
     key-id: ${RAZORPAY_KEY_ID}
     key-secret: ${RAZORPAY_KEY_SECRET}
     webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p th:if="${recipient.role() == 'OWNER'}">Your damage claim has been submitted and is waiting for review by our
+    team.</p>
+<p th:if="${recipient.role() == 'RENTER'}">The owner opened a damage claim after the equipment was returned. Our team
+    will review the inspection evidence and contact you if needed.</p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p>Claim: <span th:text="${category}">DAMAGE</span>, &#8377;<span th:text="${claimAmount}">0</span></p>
+<p><em th:text="${description}">description</em></p>
+<p>The security deposit is held until the claim is resolved.</p>
+<p th:replace="~{email/fragments :: bookingLink}"></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

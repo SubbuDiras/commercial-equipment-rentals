@@ -8,6 +8,10 @@ import com.marketplace.exception.InvalidStateTransitionException;
 import com.marketplace.exception.PaymentOperationsDisabledException;
 import com.marketplace.exception.ResourceNotFoundException;
 import com.marketplace.rental.DisputeResolutionRequest;
+import com.marketplace.notification.NotificationEvent;
+import com.marketplace.notification.NotificationType;
+import com.marketplace.user.UserProfileService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.core.env.Environment;
@@ -28,6 +32,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -42,6 +47,8 @@ public class PaymentService {
     private final RazorpayProperties properties;
     private final PaymentOperationsProperties operationsProperties;
     private final Environment environment;
+    private final UserProfileService userProfileService;
+    private final ApplicationEventPublisher events;
 
     public PaymentService(
             JdbcTemplate jdbcTemplate,
@@ -50,7 +57,9 @@ public class PaymentService {
             RazorpaySignatureVerifier signatureVerifier,
             RazorpayProperties properties,
             PaymentOperationsProperties operationsProperties,
-            Environment environment
+            Environment environment,
+            UserProfileService userProfileService,
+            ApplicationEventPublisher events
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -59,6 +68,8 @@ public class PaymentService {
         this.properties = properties;
         this.operationsProperties = operationsProperties;
         this.environment = environment;
+        this.userProfileService = userProfileService;
+        this.events = events;
     }
 
     @Transactional
@@ -94,7 +105,8 @@ public class PaymentService {
                 VALUES (?, ?, ?, ?, 'INR', 'CREATED')
                 """,
                 paymentId, bookingId, order.orderId(), booking.totalPayableAmount());
-        return new PaymentOrderResponse(paymentId, order.orderId(), amountInPaise, "INR", properties.keyId());
+        return new PaymentOrderResponse(paymentId, order.orderId(), amountInPaise, "INR", properties.keyId(),
+                paymentProvider());
     }
 
     @Transactional
@@ -191,8 +203,8 @@ public class PaymentService {
         requireFinancialOperationsEnabled();
         Instant now = Instant.now();
         var settlements = jdbcTemplate.query("""
-                        SELECT s.id, s.booking_id, s.razorpay_transfer_id,
-                               p.razorpay_payment_id, b.security_deposit_amount,
+                        SELECT s.id, s.booking_id, s.razorpay_transfer_id, b.status AS booking_status,
+                               p.id AS payment_record_id, p.razorpay_payment_id, b.security_deposit_amount,
                                s.net_payout_amount + s.owner_damage_award_amount AS net_payout_amount,
                                s.platform_commission_amount,
                                op.razorpay_linked_account_id
@@ -201,7 +213,8 @@ public class PaymentService {
                         JOIN payments p ON p.booking_id = b.id
                         JOIN equipment e ON e.id = b.equipment_id
                         JOIN owner_profiles op ON op.id = e.owner_id
-                        WHERE b.status = 'INSPECTION_PASSED'
+                        WHERE (b.status = 'INSPECTION_PASSED'
+                               OR (b.status = 'CANCELLED_BY_RENTER' AND s.net_payout_amount > 0))
                           AND s.status IN ('ON_HOLD', 'PENDING')
                           AND (s.release_after IS NULL OR s.release_after <= ?)
                         ORDER BY b.updated_at
@@ -210,6 +223,7 @@ public class PaymentService {
                         """,
                 (rs, rowNum) -> new MaturedSettlement(
                         rs.getString("id"), rs.getString("booking_id"), rs.getString("razorpay_transfer_id"),
+                        BookingStatus.valueOf(rs.getString("booking_status")), rs.getString("payment_record_id"),
                         rs.getString("razorpay_payment_id"),
                         rs.getBigDecimal("security_deposit_amount"), rs.getBigDecimal("net_payout_amount"),
                         rs.getBigDecimal("platform_commission_amount"), rs.getString("razorpay_linked_account_id")),
@@ -219,32 +233,16 @@ public class PaymentService {
         for (MaturedSettlement settlement : settlements) {
             String paymentId = settlement.razorpayPaymentId();
             BigDecimal deposit = settlement.deposit();
-            if (deposit.signum() > 0) {
+            // A cancelled booking already refunded its deposit as part of the cancellation refund.
+            if (deposit.signum() > 0 && settlement.bookingStatus() == BookingStatus.INSPECTION_PASSED) {
                 Integer resolvedDisputes = jdbcTemplate.queryForObject("""
                                 SELECT COUNT(*) FROM disputes
                                 WHERE booking_id = ? AND status = 'RESOLVED'
                                 """,
                         Integer.class, settlement.bookingId());
-                Integer existingRefund = jdbcTemplate.queryForObject("""
-                                SELECT COUNT(*) FROM refunds
-                                WHERE booking_id = ? AND refund_type = 'SECURITY_DEPOSIT'
-                                """,
-                        Integer.class, settlement.bookingId());
-                if ((resolvedDisputes == null || resolvedDisputes == 0)
-                        && (existingRefund == null || existingRefund == 0)) {
-                    requireGatewayCredentials();
-                    String refundId = gateway.refund(paymentId, toPaise(deposit),
-                            "deposit-" + settlement.bookingId());
-                    if (refundId == null || refundId.isBlank()) {
-                        throw new IllegalStateException("Razorpay did not return an id for the deposit refund.");
-                    }
-                    jdbcTemplate.update("""
-                            INSERT INTO refunds
-                                (id, booking_id, payment_id, razorpay_refund_id, amount, refund_type, status)
-                            VALUES (?, ?, (SELECT id FROM payments WHERE booking_id = ?), ?, ?, 'SECURITY_DEPOSIT', 'PROCESSED')
-                            """,
-                            UUID.randomUUID().toString(), settlement.bookingId(), settlement.bookingId(),
-                            refundId, deposit);
+                if (resolvedDisputes == null || resolvedDisputes == 0) {
+                    refundOnce(settlement.bookingId(), settlement.paymentRecordId(), paymentId, deposit,
+                            "SECURITY_DEPOSIT", "deposit-" + settlement.bookingId());
                 }
             }
             String transferId = settlement.transferId();
@@ -290,6 +288,7 @@ public class PaymentService {
                         VALUES (?, ?, 'INSPECTION_PASSED', 'COMPLETED', NULL,
                                 'Deposit refund and owner transfer released.')
                         """, UUID.randomUUID().toString(), settlement.bookingId());
+                events.publishEvent(NotificationEvent.of(NotificationType.BOOKING_COMPLETED, settlement.bookingId()));
             }
             released++;
         }
@@ -381,6 +380,8 @@ public class PaymentService {
         addStatusHistory(booking.id(), booking.status(), BookingStatus.CONFIRMED, null,
                 "Razorpay payment captured and verified.");
         createHeldSettlement(booking);
+        events.publishEvent(NotificationEvent.of(NotificationType.PAYMENT_RECEIVED, booking.id(),
+                Map.of("amount", payment.amount())));
     }
 
     private void createHeldSettlement(BookingPayment booking) {
@@ -426,6 +427,10 @@ public class PaymentService {
         }
     }
 
+    private String paymentProvider() {
+        return properties.fake() ? "FAKE" : "RAZORPAY";
+    }
+
     private PaymentOrderResponse findExistingOrder(String bookingId) {
         try {
             return jdbcTemplate.queryForObject("""
@@ -434,7 +439,8 @@ public class PaymentService {
                             """,
                     (rs, rowNum) -> new PaymentOrderResponse(
                             rs.getString("id"), rs.getString("razorpay_order_id"),
-                            toPaise(rs.getBigDecimal("amount")), rs.getString("currency"), properties.keyId()),
+                            toPaise(rs.getBigDecimal("amount")), rs.getString("currency"), properties.keyId(),
+                            paymentProvider()),
                     bookingId);
         } catch (EmptyResultDataAccessException exception) {
             return null;
@@ -491,12 +497,7 @@ public class PaymentService {
     }
 
     private String requireUser(String subject) {
-        try {
-            return jdbcTemplate.queryForObject(
-                    "SELECT id FROM users WHERE keycloak_subject_id = ?", String.class, subject);
-        } catch (EmptyResultDataAccessException exception) {
-            throw new ResourceNotFoundException("User profile not found.");
-        }
+        return userProfileService.requireExisting(subject);
     }
 
     private void addStatusHistory(
@@ -539,7 +540,7 @@ public class PaymentService {
     @Transactional
     public void resolveDispute(String disputeId, DisputeResolutionRequest request, Jwt adminJwt) {
         requireFinancialOperationsEnabled();
-        String adminUserId = requireUser(adminJwt.getSubject());
+        String adminUserId = userProfileService.resolveOrCreate(adminJwt);
         DisputeForResolution dispute;
         try {
             dispute = jdbcTemplate.queryForObject("""
@@ -581,19 +582,8 @@ public class PaymentService {
             throw new ConflictException("The owner settlement is not available for dispute resolution.");
         }
         if (refundAmount.signum() > 0) {
-            requireGatewayCredentials();
-            String refundId = gateway.refund(dispute.razorpayPaymentId(), toPaise(refundAmount),
-                    "dispute-" + dispute.id());
-            if (refundId == null || refundId.isBlank()) {
-                throw new IllegalStateException("Razorpay did not return an id for the dispute refund.");
-            }
-            jdbcTemplate.update("""
-                    INSERT INTO refunds
-                        (id, booking_id, payment_id, razorpay_refund_id, amount, refund_type, status)
-                    VALUES (?, ?, ?, ?, ?, 'DISPUTE_BALANCE', 'PROCESSED')
-                    """,
-                    UUID.randomUUID().toString(), dispute.bookingId(), dispute.paymentRecordId(),
-                    refundId, refundAmount);
+            refundOnce(dispute.bookingId(), dispute.paymentRecordId(), dispute.razorpayPaymentId(), refundAmount,
+                    "DISPUTE_BALANCE", "dispute-" + dispute.id());
         }
         jdbcTemplate.update("""
                 UPDATE disputes SET status = 'RESOLVED', approved_deduction_amount = ?,
@@ -623,6 +613,80 @@ public class PaymentService {
         } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
             throw new IllegalStateException("Unable to serialize dispute audit details.", exception);
         }
+        events.publishEvent(NotificationEvent.of(NotificationType.DISPUTE_RESOLVED, dispute.bookingId(), Map.of(
+                "approvedDeduction", approved,
+                "refundAmount", refundAmount,
+                "resolutionNotes", request.resolutionNotes())));
+    }
+
+    /**
+     * Refunds a captured booking payment as part of a cancellation. Runs inside the caller's transaction, which
+     * must already hold the booking row lock. Returns the Razorpay refund id.
+     */
+    @Transactional
+    public String refundForCancellation(String bookingId, BigDecimal amount) {
+        requireFinancialOperationsEnabled();
+        CapturedPayment payment;
+        try {
+            payment = jdbcTemplate.queryForObject("""
+                            SELECT id, razorpay_payment_id FROM payments
+                            WHERE booking_id = ? AND status = 'CAPTURED'
+                            """,
+                    (rs, rowNum) -> new CapturedPayment(rs.getString("id"), rs.getString("razorpay_payment_id")),
+                    bookingId);
+        } catch (EmptyResultDataAccessException exception) {
+            throw new ConflictException("The booking has no captured payment to refund.");
+        }
+        return refundOnce(bookingId, payment.id(), payment.razorpayPaymentId(), amount,
+                "CANCELLATION", "cancel-" + bookingId);
+    }
+
+    /**
+     * Re-targets a cancelled booking's pending owner settlement: a positive compensation is transferred by the
+     * normal settlement task; zero closes the settlement so nothing is paid out.
+     */
+    @Transactional
+    public void settleCancellation(String bookingId, BigDecimal ownerCompensation) {
+        requireFinancialOperationsEnabled();
+        jdbcTemplate.update("""
+                UPDATE owner_settlements
+                SET net_payout_amount = ?, owner_damage_award_amount = 0.00, status = ?
+                WHERE booking_id = ? AND status = 'PENDING' AND razorpay_transfer_id IS NULL
+                """,
+                ownerCompensation, ownerCompensation.signum() > 0 ? "PENDING" : "CANCELLED", bookingId);
+    }
+
+    /** Issues one refund per booking and refund type; a repeat call returns the refund already recorded. */
+    private String refundOnce(
+            String bookingId,
+            String paymentRecordId,
+            String razorpayPaymentId,
+            BigDecimal amount,
+            String refundType,
+            String receipt
+    ) {
+        List<String> existing = jdbcTemplate.queryForList("""
+                        SELECT razorpay_refund_id FROM refunds WHERE booking_id = ? AND refund_type = ?
+                        """,
+                String.class, bookingId, refundType);
+        if (!existing.isEmpty()) {
+            return existing.get(0);
+        }
+        requireGatewayCredentials();
+        String refundId = gateway.refund(razorpayPaymentId, toPaise(amount), receipt);
+        if (refundId == null || refundId.isBlank()) {
+            throw new IllegalStateException("Razorpay did not return an id for the " + refundType + " refund.");
+        }
+        jdbcTemplate.update("""
+                INSERT INTO refunds
+                    (id, booking_id, payment_id, razorpay_refund_id, amount, refund_type, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'PROCESSED')
+                """,
+                UUID.randomUUID().toString(), bookingId, paymentRecordId, refundId, amount, refundType);
+        return refundId;
+    }
+
+    private record CapturedPayment(String id, String razorpayPaymentId) {
     }
 
     private static long toPaise(BigDecimal amount) {
@@ -681,6 +745,8 @@ public class PaymentService {
             String id,
             String bookingId,
             String transferId,
+            BookingStatus bookingStatus,
+            String paymentRecordId,
             String razorpayPaymentId,
             BigDecimal deposit,
             BigDecimal netPayout,

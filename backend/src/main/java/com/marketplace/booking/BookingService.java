@@ -2,9 +2,14 @@ package com.marketplace.booking;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.marketplace.common.PageResponse;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.InvalidStateTransitionException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.notification.NotificationEvent;
+import com.marketplace.notification.NotificationType;
+import com.marketplace.user.UserProfileService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,6 +29,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -41,22 +47,28 @@ public class BookingService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final BookingPricingService pricingService;
+    private final UserProfileService userProfileService;
+    private final ApplicationEventPublisher events;
 
     public BookingService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
-            BookingPricingService pricingService
+            BookingPricingService pricingService,
+            UserProfileService userProfileService,
+            ApplicationEventPublisher events
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.pricingService = pricingService;
+        this.userProfileService = userProfileService;
+        this.events = events;
     }
 
     @Transactional
     public BookingResponse create(Jwt renterJwt, BookingCreateRequest request) {
         validatePeriod(request.startTime(), request.endTime());
         EquipmentPrice equipment = lockEquipment(request.equipmentId());
-        String renterId = resolveUser(renterJwt);
+        String renterId = userProfileService.resolveOrCreate(renterJwt);
         validateDelivery(request, equipment);
 
         if (hasOverlappingBooking(equipment.id(), request.startTime(), request.endTime())) {
@@ -103,6 +115,7 @@ public class BookingService {
             throw new ConflictException("The booking could not be created because its data conflicts with existing records.");
         }
 
+        events.publishEvent(NotificationEvent.of(NotificationType.BOOKING_REQUESTED, bookingId));
         return new BookingResponse(bookingId, bookingReference, equipment.id(), request.startTime(),
                 request.endTime(), request.deliveryOption().name(), BookingStatus.REQUESTED.name(),
                 holdExpiresAt, quote.toResponse());
@@ -129,7 +142,7 @@ public class BookingService {
     @Transactional
     public BookingResponse accept(String bookingId, Jwt ownerJwt) {
         BookingRow booking = lockBooking(bookingId);
-        String ownerUserId = resolveUser(ownerJwt);
+        String ownerUserId = userProfileService.resolveOrCreate(ownerJwt);
         assertEquipmentOwner(booking.equipmentId(), ownerUserId);
         requireStatus(booking, BookingStatus.REQUESTED, BookingStatus.PAYMENT_PENDING);
         if (booking.holdExpiresAt() == null || !booking.holdExpiresAt().isAfter(Instant.now())) {
@@ -144,13 +157,14 @@ public class BookingService {
                 BookingStatus.PAYMENT_PENDING.name(), Timestamp.from(holdExpiresAt),
                 booking.id(), BookingStatus.REQUESTED.name());
         insertStatusHistory(booking.id(), BookingStatus.REQUESTED, BookingStatus.PAYMENT_PENDING, ownerUserId, null);
+        events.publishEvent(NotificationEvent.of(NotificationType.BOOKING_ACCEPTED, booking.id()));
         return booking.withStatus(BookingStatus.PAYMENT_PENDING, holdExpiresAt);
     }
 
     @Transactional
     public BookingResponse reject(String bookingId, Jwt ownerJwt, String reason) {
         BookingRow booking = lockBooking(bookingId);
-        String ownerUserId = resolveUser(ownerJwt);
+        String ownerUserId = userProfileService.resolveOrCreate(ownerJwt);
         assertEquipmentOwner(booking.equipmentId(), ownerUserId);
         requireStatus(booking, BookingStatus.REQUESTED, BookingStatus.OWNER_REJECTED);
         jdbcTemplate.update("""
@@ -159,22 +173,77 @@ public class BookingService {
                 """,
                 BookingStatus.OWNER_REJECTED.name(), booking.id(), BookingStatus.REQUESTED.name());
         insertStatusHistory(booking.id(), BookingStatus.REQUESTED, BookingStatus.OWNER_REJECTED, ownerUserId, reason);
+        events.publishEvent(NotificationEvent.of(NotificationType.BOOKING_REJECTED, booking.id(),
+                Map.of("reason", reason)));
         return booking.withStatus(BookingStatus.OWNER_REJECTED, null);
     }
 
     @Transactional(readOnly = true)
-    public List<BookingResponse> listForRenter(Jwt renterJwt, int page, int size) {
+    public PageResponse<RenterBookingSummary> listForRenter(Jwt renterJwt, int page, int size) {
         validatePage(page, size);
-        String renterId = findExistingUser(renterJwt.getSubject());
-        return jdbcTemplate.query("""
-                        SELECT b.*
+        String renterId = userProfileService.findExisting(renterJwt.getSubject()).orElse(null);
+        if (renterId == null) {
+            return PageResponse.of(List.of(), page, size, 0);
+        }
+        Long total = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM bookings WHERE renter_user_id = ?", Long.class, renterId);
+        List<RenterBookingSummary> content = jdbcTemplate.query("""
+                        SELECT b.*, e.title AS equipment_title
                         FROM bookings b
+                        JOIN equipment e ON e.id = b.equipment_id
                         WHERE b.renter_user_id = ?
                         ORDER BY b.created_at DESC
                         LIMIT ? OFFSET ?
                         """,
-                (resultSet, rowNumber) -> mapBooking(resultSet),
+                (resultSet, rowNumber) -> new RenterBookingSummary(mapBooking(resultSet),
+                        resultSet.getString("equipment_title")),
                 renterId, size, (long) page * size);
+        return PageResponse.of(content, page, size, total == null ? 0 : total);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<OwnerBookingSummary> listForOwner(
+            Jwt ownerJwt,
+            List<BookingStatus> statuses,
+            int page,
+            int size
+    ) {
+        validatePage(page, size);
+        String ownerUserId = userProfileService.findExisting(ownerJwt.getSubject()).orElse(null);
+        if (ownerUserId == null) {
+            return PageResponse.of(List.of(), page, size, 0);
+        }
+        String from = """
+                FROM bookings b
+                JOIN equipment e ON e.id = b.equipment_id
+                JOIN owner_profiles op ON op.id = e.owner_id
+                JOIN users r ON r.id = b.renter_user_id
+                WHERE op.user_id = ?
+                """;
+        List<Object> parameters = new ArrayList<>();
+        parameters.add(ownerUserId);
+        if (statuses != null && !statuses.isEmpty()) {
+            from += " AND b.status IN (" + String.join(",", statuses.stream().map(status -> "?").toList()) + ")";
+            statuses.forEach(status -> parameters.add(status.name()));
+        }
+        Long total = jdbcTemplate.queryForObject("SELECT COUNT(*) " + from, Long.class, parameters.toArray());
+
+        parameters.add(size);
+        parameters.add((long) page * size);
+        List<OwnerBookingSummary> content = jdbcTemplate.query("""
+                        SELECT b.*, e.title AS equipment_title,
+                               r.first_name AS renter_first_name, r.last_name AS renter_last_name
+                        """ + from + """
+                         ORDER BY b.created_at DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                (resultSet, rowNumber) -> new OwnerBookingSummary(
+                        mapBooking(resultSet),
+                        resultSet.getString("equipment_title"),
+                        resultSet.getString("renter_first_name") + " " + resultSet.getString("renter_last_name"),
+                        resultSet.getTimestamp("created_at").toInstant()),
+                parameters.toArray());
+        return PageResponse.of(content, page, size, total == null ? 0 : total);
     }
 
     @Transactional(readOnly = true)
@@ -186,7 +255,7 @@ public class BookingService {
         BookingRow booking = findBooking(bookingId);
         boolean admin = authorities.stream().anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
         if (!admin) {
-            String userId = findExistingUser(jwt.getSubject());
+            String userId = userProfileService.requireExisting(jwt.getSubject());
             boolean renter = booking.renterUserId().equals(userId);
             boolean owner = jdbcTemplate.queryForObject("""
                             SELECT COUNT(*) FROM equipment e
@@ -232,53 +301,6 @@ public class BookingService {
             }
         }
         return count;
-    }
-
-    private String resolveUser(Jwt jwt) {
-        String subject = jwt.getSubject();
-        String userId = findExistingUserOrNull(subject);
-        if (userId != null) {
-            return userId;
-        }
-        String email = jwt.getClaimAsString("email");
-        if (subject == null || subject.isBlank() || email == null || email.isBlank()) {
-            throw new ConflictException("The authenticated account must provide a subject and email address.");
-        }
-        String preferredName = jwt.getClaimAsString("preferred_username");
-        String givenName = firstNonBlank(jwt.getClaimAsString("given_name"), preferredName, "Marketplace");
-        String familyName = firstNonBlank(jwt.getClaimAsString("family_name"), "User");
-        userId = UUID.randomUUID().toString();
-        try {
-            jdbcTemplate.update("""
-                    INSERT INTO users (id, keycloak_subject_id, email, phone, first_name, last_name)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    userId, subject, email, jwt.getClaimAsString("phone_number"), givenName, familyName);
-            return userId;
-        } catch (DataIntegrityViolationException exception) {
-            String existingId = findExistingUserOrNull(subject);
-            if (existingId != null) {
-                return existingId;
-            }
-            throw new ConflictException("The authenticated account conflicts with an existing user profile.");
-        }
-    }
-
-    private String findExistingUser(String subject) {
-        String userId = findExistingUserOrNull(subject);
-        if (userId == null) {
-            throw new ResourceNotFoundException("User profile not found.");
-        }
-        return userId;
-    }
-
-    private String findExistingUserOrNull(String subject) {
-        try {
-            return jdbcTemplate.queryForObject(
-                    "SELECT id FROM users WHERE keycloak_subject_id = ?", String.class, subject);
-        } catch (EmptyResultDataAccessException exception) {
-            return null;
-        }
     }
 
     private EquipmentPrice lockEquipment(String equipmentId) {
@@ -442,15 +464,6 @@ public class BookingService {
         }
     }
 
-    private static String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return "Marketplace";
-    }
-
     private static void validatePage(int page, int size) {
         if (page < 0 || size < 1 || size > 100) {
             throw new com.marketplace.exception.BadRequestException(
@@ -458,7 +471,7 @@ public class BookingService {
         }
     }
 
-    private static BookingResponse mapBooking(ResultSet resultSet) throws SQLException {
+    static BookingResponse mapBooking(ResultSet resultSet) throws SQLException {
         return mapBookingRow(resultSet).toResponse();
     }
 

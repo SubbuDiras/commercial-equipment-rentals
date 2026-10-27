@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.user.UserProfileService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -21,10 +22,16 @@ public class EquipmentCategoryAdminService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final UserProfileService userProfileService;
 
-    public EquipmentCategoryAdminService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public EquipmentCategoryAdminService(
+            JdbcTemplate jdbcTemplate,
+            ObjectMapper objectMapper,
+            UserProfileService userProfileService
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.userProfileService = userProfileService;
     }
 
     @Transactional
@@ -127,11 +134,7 @@ public class EquipmentCategoryAdminService {
     }
 
     private void writeAudit(Jwt adminJwt, String action, String categoryId) {
-        String actorId = jdbcTemplate.query("""
-                        SELECT id FROM users WHERE keycloak_subject_id = ?
-                        """,
-                rs -> rs.next() ? rs.getString(1) : null,
-                adminJwt.getSubject());
+        String actorId = userProfileService.resolveOrCreate(adminJwt);
         try {
             jdbcTemplate.update("""
                     INSERT INTO audit_logs (id, actor_user_id, action, entity_name, entity_id, details_json)

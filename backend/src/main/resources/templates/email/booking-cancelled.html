@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>This booking was cancelled by the
+    <span th:text="${breakdown.cancelledBy() == 'OWNER' ? 'owner' : 'renter'}">renter</span>.</p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p th:if="${reason}">Reason: <em th:text="${reason}">reason</em></p>
+<table th:if="${recipient.role() == 'RENTER' and breakdown.amountPaid().signum() > 0}"
+       style="border-collapse: collapse;">
+    <tr><td style="padding: 2px 16px 2px 0;">Amount paid</td>
+        <td>&#8377;<span th:text="${breakdown.amountPaid()}">0</span></td></tr>
+    <tr><td style="padding: 2px 16px 2px 0;">Rental refund</td>
+        <td>&#8377;<span th:text="${breakdown.rentalRefund()}">0</span></td></tr>
+    <tr th:if="${breakdown.gatewayFee().signum() > 0}"><td style="padding: 2px 16px 2px 0;">Gateway fee withheld</td>
+        <td>&#8377;<span th:text="${breakdown.gatewayFee()}">0</span></td></tr>
+    <tr><td style="padding: 2px 16px 2px 0;">Deposit refund</td>
+        <td>&#8377;<span th:text="${breakdown.depositRefund()}">0</span></td></tr>
+    <tr><td style="padding: 2px 16px 2px 0;"><strong>Total refund</strong></td>
+        <td><strong>&#8377;<span th:text="${breakdown.totalRefund()}">0</span></strong></td></tr>
+</table>
+<p th:if="${recipient.role() == 'RENTER' and breakdown.amountPaid().signum() == 0}">No payment had been taken, so
+    there is nothing to refund.</p>
+<p th:if="${recipient.role() == 'RENTER' and breakdown.platformCredit().signum() > 0}">A platform credit of
+    &#8377;<span th:text="${breakdown.platformCredit()}">500</span> has been recorded for you.</p>
+<p th:if="${recipient.role() == 'OWNER' and breakdown.ownerCompensation().signum() > 0}">You will receive a reservation
+    compensation of &#8377;<span th:text="${breakdown.ownerCompensation()}">0</span> through your normal payout.</p>
+<p th:if="${recipient.role() == 'OWNER' and breakdown.cancelledBy() == 'OWNER' and breakdown.amountPaid().signum() > 0}">
+    Owner cancellations of paid bookings are recorded on your profile.</p>
+<p>The dates are free again.</p>
+<p style="font-size: 12px; color: #6b7280;" th:text="${breakdown.policyNotice()}">policy notice</p>
+<p th:replace="~{email/fragments :: bookingLink}"></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

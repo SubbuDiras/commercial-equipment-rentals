@@ -3,6 +3,9 @@ package com.marketplace.equipment;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.marketplace.notification.NotificationEvent;
+import com.marketplace.notification.NotificationType;
+import org.springframework.context.ApplicationEventPublisher;
 import com.marketplace.exception.BadRequestException;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
@@ -30,10 +33,16 @@ public class EquipmentCatalogueService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher events;
 
-    public EquipmentCatalogueService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public EquipmentCatalogueService(
+            JdbcTemplate jdbcTemplate,
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher events
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.events = events;
     }
 
     @Transactional(readOnly = true)
@@ -189,7 +198,21 @@ public class EquipmentCatalogueService {
         if (rows.isEmpty()) {
             throw new ResourceNotFoundException("Active equipment listing not found.");
         }
-        return rows.get(0);
+        // Only renters' reviews rate the equipment; the owner's review of the renter shares the equipment id.
+        return jdbcTemplate.query("""
+                        SELECT COUNT(*) AS review_count, COALESCE(SUM(r.rating), 0) AS rating_total
+                        FROM reviews r
+                        JOIN bookings b ON b.id = r.booking_id
+                        WHERE r.equipment_id = ? AND r.reviewer_user_id = b.renter_user_id AND r.is_published = TRUE
+                        """,
+                resultSet -> {
+                    resultSet.next();
+                    int count = resultSet.getInt("review_count");
+                    BigDecimal average = count == 0 ? null : BigDecimal.valueOf(resultSet.getLong("rating_total"))
+                            .divide(BigDecimal.valueOf(count), 2, java.math.RoundingMode.HALF_UP);
+                    return rows.get(0).withRating(average, count);
+                },
+                equipmentId);
     }
 
     @Transactional
@@ -308,6 +331,9 @@ public class EquipmentCatalogueService {
         writeAudit(adminJwt, approve ? "EQUIPMENT_LISTING_APPROVED" : "EQUIPMENT_LISTING_REJECTED",
                 equipmentId, approve ? Map.of("status", targetStatus)
                         : Map.of("status", targetStatus, "reason", reason.trim()));
+        events.publishEvent(approve
+                ? NotificationEvent.of(NotificationType.LISTING_APPROVED, equipmentId)
+                : NotificationEvent.of(NotificationType.LISTING_REJECTED, equipmentId, Map.of("reason", reason.trim())));
         return findAnyListing(equipmentId);
     }
 
@@ -452,7 +478,9 @@ public class EquipmentCatalogueService {
                 resultSet.getBigDecimal("latitude"),
                 resultSet.getBigDecimal("longitude"),
                 resultSet.getString("status"),
-                createdAt == null ? null : createdAt.toInstant());
+                createdAt == null ? null : createdAt.toInstant(),
+                null,
+                null);
     }
 
     private EquipmentListingResponse mapPublicListing(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -482,7 +510,9 @@ public class EquipmentCatalogueService {
                 null,
                 null,
                 listing.status(),
-                listing.createdAt());
+                listing.createdAt(),
+                null,
+                null);
     }
 
     private static String emptyToNull(String value) {

@@ -18,6 +18,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.marketplace.booking.BookingCreateRequest;
 import com.marketplace.booking.BookingService;
 import com.marketplace.booking.DeliveryOption;
+import com.marketplace.dev.DevToolsService;
 import com.marketplace.exception.ConflictException;
 
 import java.time.Instant;
@@ -53,6 +54,29 @@ class FlywayMigrationTests {
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", MYSQL::getDriverClassName);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
+        // The dev profile reads these from environment variables only; supply test values here.
+        registry.add("storage.s3.endpoint", () -> "http://localhost:9000");
+        registry.add("storage.s3.region", () -> "ap-south-1");
+        registry.add("storage.s3.access-key", () -> "test-access-key");
+        registry.add("storage.s3.secret-key", () -> "test-secret-key");
+        registry.add("storage.s3.bucket-name", () -> "test-private-bucket");
+        registry.add("security.otp.secret", () -> "test-otp-secret");
+        registry.add("spring.mail.host", () -> "localhost");
+        registry.add("spring.mail.port", () -> "1025");
+        registry.add("notifications.enabled", () -> "false");
+        registry.add("payment.operations.enabled", () -> "false");
+        registry.add("payment.operations.production-approved", () -> "false");
+        registry.add("payment.operations.sandbox-only", () -> "true");
+        registry.add("payment.razorpay.fake", () -> "false");
+        registry.add("payment.razorpay.key-id", () -> "rzp_test_flyway");
+        registry.add("payment.razorpay.key-secret", () -> "test-key-secret");
+        registry.add("payment.razorpay.webhook-secret", () -> "test-webhook-secret");
+        registry.add("payment.razorpay.api-base-url", () -> "http://localhost:18080/v1");
+        registry.add("app.cors.allowed-origins", () -> "http://localhost:4200");
+        registry.add("keycloak.admin.base-url", () -> "http://localhost:8080");
+        registry.add("keycloak.admin.realm", () -> "marketplace-realm");
+        registry.add("keycloak.admin.client-id", () -> "marketplace-backend");
+        registry.add("keycloak.admin.client-secret", () -> "");
     }
 
     @Autowired
@@ -64,6 +88,9 @@ class FlywayMigrationTests {
     @Autowired
     private BookingService bookingService;
 
+    @Autowired
+    private DevToolsService devToolsService;
+
     @MockBean
     private JwtDecoder jwtDecoder;
 
@@ -71,7 +98,7 @@ class FlywayMigrationTests {
     void appliesAllMigrationsToAnEmptyMysqlDatabase() {
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .contains("1", "2", "3", "4", "5", "6", "7", "8");
+                .contains("1", "2", "3", "4", "5", "6", "7", "8", "9");
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.columns
                 WHERE table_schema = DATABASE()
@@ -89,6 +116,43 @@ class FlywayMigrationTests {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM equipment_categories WHERE is_active = TRUE",
                 Integer.class)).isEqualTo(6);
+    }
+
+    @Test
+    void devSeedAndTimeShiftWorkAgainstTheRealSchema() {
+        Jwt ownerJwt = Jwt.withTokenValue("seed-token").header("alg", "none")
+                .subject(UUID.randomUUID().toString())
+                .claim("email", "seed-owner-" + UUID.randomUUID() + "@example.com")
+                .build();
+
+        DevToolsService.SeedResponse first = devToolsService.seedOwnerListing(ownerJwt);
+        DevToolsService.SeedResponse second = devToolsService.seedOwnerListing(ownerJwt);
+
+        assertThat(second.ownerProfileId()).isEqualTo(first.ownerProfileId());
+        assertThat(second.equipmentId()).isNotEqualTo(first.equipmentId());
+        assertThat(first.ownerRoleGranted()).as("Keycloak admin is not configured in this test").isFalse();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM equipment e JOIN owner_profiles op ON op.id = e.owner_id
+                WHERE op.id = ? AND e.status = 'ACTIVE' AND op.verification_status = 'VERIFIED'
+                  AND op.razorpay_linked_account_id LIKE 'acc_FAKE%'
+                """, Integer.class, first.ownerProfileId())).isEqualTo(2);
+
+        Instant start = Instant.now().plusSeconds(3 * 86_400L).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Jwt renterJwt = Jwt.withTokenValue("seed-renter").header("alg", "none")
+                .subject(UUID.randomUUID().toString())
+                .claim("email", "seed-renter-" + UUID.randomUUID() + "@example.com")
+                .build();
+        String bookingId = bookingService.create(renterJwt, new BookingCreateRequest(
+                first.equipmentId(), start, start.plusSeconds(2 * 86_400L), DeliveryOption.PICKUP, null)).bookingId();
+
+        DevToolsService.ShiftTimeResponse shifted = devToolsService.shiftTime(bookingId, -96);
+
+        assertThat(shifted.startTime()).isEqualTo(start.minusSeconds(96 * 3600L));
+        assertThat(shifted.endTime()).isEqualTo(start.plusSeconds(2 * 86_400L - 96 * 3600L));
+        assertThat(shifted.holdExpiresAt()).isBefore(Instant.now());
+        assertThat(devToolsService.runScheduledJobs().expiredHolds()).isGreaterThanOrEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM bookings WHERE id = ?", String.class, bookingId))
+                .isEqualTo("REQUEST_EXPIRED");
     }
 
     @Test

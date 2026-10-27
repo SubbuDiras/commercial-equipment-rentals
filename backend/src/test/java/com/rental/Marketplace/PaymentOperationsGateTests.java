@@ -18,7 +18,7 @@ class PaymentOperationsGateTests {
     void financialOperationsAreDisabledByDefault() {
         PaymentService paymentService = paymentService(
                 new PaymentOperationsProperties(false, false, true),
-                new RazorpayProperties("rzp_test_key", "test-secret", "webhook-secret", null),
+                new RazorpayProperties("rzp_test_key", "test-secret", "webhook-secret", null, false),
                 new StandardEnvironment());
 
         assertThat(paymentService.financialOperationsEnabled()).isFalse();
@@ -30,7 +30,7 @@ class PaymentOperationsGateTests {
     void nonProductionOperationsRejectLiveCredentialsEvenWhenEnabled() {
         PaymentService paymentService = paymentService(
                 new PaymentOperationsProperties(true, false, true),
-                new RazorpayProperties("rzp_live_key", "live-secret", "webhook-secret", null),
+                new RazorpayProperties("rzp_live_key", "live-secret", "webhook-secret", null, false),
                 new StandardEnvironment());
 
         assertThat(paymentService.financialOperationsEnabled()).isFalse();
@@ -44,7 +44,7 @@ class PaymentOperationsGateTests {
         environment.setActiveProfiles("prod");
         PaymentService paymentService = paymentService(
                 new PaymentOperationsProperties(true, false, true),
-                new RazorpayProperties("rzp_live_key", "live-secret", "webhook-secret", null),
+                new RazorpayProperties("rzp_live_key", "live-secret", "webhook-secret", null, false),
                 environment);
 
         assertThatThrownBy(() -> paymentService.releaseMaturedSettlements())
@@ -63,6 +63,8 @@ class PaymentOperationsGateTests {
                 new RazorpaySignatureVerifier(),
                 razorpay,
                 operations,
-                environment);
+                environment,
+                null,
+                null);
     }
 }

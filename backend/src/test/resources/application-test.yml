@@ -38,3 +38,15 @@ payment:
 security:
   otp:
     secret: test-otp-secret
+
+app:
+  cors:
+    allowed-origins: http://localhost:4200
+
+# No client secret: owner approval falls back to the "assign ROLE_OWNER by hand" warning.
+keycloak:
+  admin:
+    base-url: http://localhost:8080
+    realm: marketplace-realm
+    client-id: marketplace-backend
+    client-secret: ""
