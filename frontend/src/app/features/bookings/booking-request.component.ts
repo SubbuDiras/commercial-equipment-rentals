@@ -85,7 +85,7 @@ import { Booking, BookingApiService, BookingRequest } from './booking-api.servic
           <dt>Refundable deposit</dt><dd>{{ booking.pricing.securityDepositAmount | currency:'INR' }}</dd>
           <dt class="quote-total">Total payable</dt><dd class="quote-total">{{ booking.pricing.totalPayableAmount | currency:'INR' }}</dd>
         </dl>
-        <a routerLink="/bookings" class="btn btn-primary" (click)="quote.set(null)">View booking history</a>
+        <a [routerLink]="['/bookings', booking.bookingId]" class="btn btn-primary" (click)="quote.set(null)">Open booking</a>
       </section>
     </div>
   `,

@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { Page } from '../bookings/booking-api.service';
 
 export interface EquipmentListingRequest {
   categoryId: string;
@@ -60,6 +61,9 @@ export interface EquipmentListing {
   longitude: number | null;
   status: string;
   createdAt: string;
+  /** Filled in on the public details endpoint only. */
+  averageRating: number | null;
+  reviewCount: number | null;
 }
 
 export interface EquipmentListingPage {
@@ -68,6 +72,14 @@ export interface EquipmentListingPage {
   size: number;
   totalElements: number;
   totalPages: number;
+}
+
+export interface EquipmentReview {
+  reviewId: string;
+  rating: number;
+  comments: string | null;
+  reviewerName: string;
+  createdAt: string;
 }
 
 export interface EquipmentImage {
@@ -113,6 +125,11 @@ export class EquipmentCatalogueService {
 
   get(equipmentId: string): Observable<EquipmentListing> {
     return this.http.get<EquipmentListing>(`/api/v1/equipment/${encodeURIComponent(equipmentId)}`);
+  }
+
+  reviews(equipmentId: string, page = 0, size = 10): Observable<Page<EquipmentReview>> {
+    return this.http.get<Page<EquipmentReview>>(
+      `/api/v1/equipment/${encodeURIComponent(equipmentId)}/reviews`, { params: { page, size } });
   }
 
   images(equipmentId: string): Observable<EquipmentImage[]> {

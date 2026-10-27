@@ -57,7 +57,10 @@ const ROLE_LABELS: Record<string, string> = {
           <a *ngIf="auth.hasRole('ROLE_RENTER')" routerLink="/bookings" routerLinkActive="active" class="nav-link">My Bookings</a>
           <a *ngIf="auth.hasRole('ROLE_RENTER') && !auth.isOwner()" routerLink="/owner/onboarding" routerLinkActive="active" class="nav-link">Become an Owner</a>
           <a *ngIf="auth.isOwner()" routerLink="/owner/equipment" routerLinkActive="active" class="nav-link">My Listings</a>
+          <a *ngIf="auth.isOwner()" routerLink="/owner/bookings" routerLinkActive="active" class="nav-link">Owner Bookings</a>
+          <a *ngIf="auth.isAdmin()" routerLink="/admin/owners" routerLinkActive="active" class="nav-link">Owner KYC</a>
           <a *ngIf="auth.isAdmin()" routerLink="/admin/listings" routerLinkActive="active" class="nav-link">Listing Reviews</a>
+          <a *ngIf="auth.isAdmin()" routerLink="/admin/disputes" routerLinkActive="active" class="nav-link">Disputes</a>
           <a *ngIf="auth.isAdmin()" routerLink="/admin" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }" class="nav-link admin">Admin Portal</a>
         </nav>
 
@@ -67,7 +70,7 @@ const ROLE_LABELS: Record<string, string> = {
             <div style="text-align: right; white-space: nowrap;">
               <div style="font-size: 0.875rem; font-weight: 600; line-height: 1.3;">{{ auth.currentUser()?.name }}</div>
               <div style="display: flex; gap: 0.25rem; justify-content: flex-end; margin-top: 0.125rem;">
-                <span *ngFor="let role of auth.currentUser()?.roles" class="badge badge-role">
+                <span *ngIf="primaryRole() as role" class="badge badge-role">
                   {{ roleLabel(role) }}
                 </span>
               </div>
@@ -90,6 +93,12 @@ const ROLE_LABELS: Record<string, string> = {
 })
 export class HeaderComponent {
   auth = inject(AuthService);
+
+  primaryRole(): string | null {
+    const roles = this.auth.currentUser()?.roles ?? [];
+    return ['ROLE_ADMIN', 'ROLE_OWNER', 'ROLE_SUPPORT', 'ROLE_RENTER']
+      .find(role => roles.includes(role)) ?? null;
+  }
 
   roleLabel(role: string): string {
     return ROLE_LABELS[role] ?? role.replace('ROLE_', '');

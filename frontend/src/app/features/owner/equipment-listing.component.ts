@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { Component, inject, OnInit, signal } from '@angular/core';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormArray, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import {
   EquipmentCategory,
@@ -9,19 +9,21 @@ import {
   EquipmentListing,
   EquipmentListingRequest
 } from '../catalogue/equipment-catalogue.service';
+import { InrPipe } from '../../shared/inr.pipe';
+import { StatusBadgeComponent } from '../../shared/status-badge.component';
 
 @Component({
   selector: 'app-equipment-listing',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, InrPipe, StatusBadgeComponent],
   template: `
     <main class="container" style="max-width: 1000px; padding: 3rem 1rem;">
       <h1>My equipment listings</h1>
       <p style="color: var(--color-text-muted);">Create a draft, then submit it for admin approval before it appears in public search.</p>
 
-      <section class="card" style="padding: 1.5rem; margin: 1.5rem 0;">
-        <h2 style="font-size: 1.25rem;">Create listing</h2>
-        <form [formGroup]="form" (ngSubmit)="create()" style="display: grid; gap: 1rem; margin-top: 1rem;">
+      <section id="listing-form" class="card" style="padding: 1.5rem; margin: 1.5rem 0;">
+        <h2 style="font-size: 1.25rem;">{{ editingId() ? 'Edit listing' : 'Create listing' }}</h2>
+        <form [formGroup]="form" (ngSubmit)="save()" style="display: grid; gap: 1rem; margin-top: 1rem;">
           <div class="grid grid-cols-2" style="gap: 1rem;">
             <label>Category
               <select formControlName="categoryId" style="display:block;width:100%;padding:.6rem;margin-top:.3rem;">
@@ -71,9 +73,22 @@ import {
             <label>Latitude<input type="number" formControlName="latitude" min="-90" max="90" step="0.0000001" style="display:block;width:100%;padding:.6rem;margin-top:.3rem;" /></label>
             <label>Longitude<input type="number" formControlName="longitude" min="-180" max="180" step="0.0000001" style="display:block;width:100%;padding:.6rem;margin-top:.3rem;" /></label>
           </div>
+          <fieldset formArrayName="specifications" style="border: none; display: grid; gap: .5rem;">
+            <legend style="font-weight: 600; margin-bottom: .35rem;">Specifications (e.g. Power: 1500 W, Weight: 11 kg)</legend>
+            <div *ngFor="let spec of specifications.controls; let i = index" [formGroupName]="i"
+                 style="display: grid; grid-template-columns: 1fr 1fr auto; gap: .5rem;">
+              <input formControlName="name" placeholder="Name" maxlength="100" class="form-control" style="margin-top: 0;" [attr.aria-label]="'Specification ' + (i + 1) + ' name'" />
+              <input formControlName="value" placeholder="Value" maxlength="255" class="form-control" style="margin-top: 0;" [attr.aria-label]="'Specification ' + (i + 1) + ' value'" />
+              <button type="button" class="btn btn-secondary" (click)="removeSpecification(i)" aria-label="Remove specification">✕</button>
+            </div>
+            <button type="button" class="btn btn-secondary" (click)="addSpecification()" style="justify-self: start;">Add specification</button>
+          </fieldset>
           <p *ngIf="error()" role="alert" style="color:var(--color-danger);">{{ error() }}</p>
           <p *ngIf="success()" role="status" style="color:var(--color-accent);">{{ success() }}</p>
-          <button class="btn btn-primary" type="submit" [disabled]="form.invalid || saving()">Save draft</button>
+          <div style="display: flex; gap: .75rem;">
+            <button class="btn btn-primary" type="submit" [disabled]="form.invalid || saving()">{{ editingId() ? 'Save changes' : 'Save draft' }}</button>
+            <button *ngIf="editingId()" class="btn btn-secondary" type="button" (click)="cancelEdit()">Cancel editing</button>
+          </div>
         </form>
       </section>
 
@@ -82,13 +97,16 @@ import {
       <section *ngFor="let listing of listings()" class="card" style="padding:1rem;margin:.75rem 0;display:flex;justify-content:space-between;gap:1rem;align-items:center;">
         <div>
           <strong>{{ listing.title }}</strong>
-          <span class="badge badge-role" style="margin-left:.5rem;">{{ listing.status }}</span>
-          <div style="color:var(--color-text-muted);">{{ listing.city }} · {{ listing.baseDailyRate | currency:'INR' }}/day</div>
+          <app-status-badge [status]="listing.status" style="margin-left:.5rem;" />
+          <div style="color:var(--color-text-muted);">{{ listing.city }} · {{ listing.baseDailyRate | inr }}/day</div>
           <div *ngIf="images()[listing.id]?.length" style="display:flex;gap:.5rem;margin-top:.75rem;">
             <img *ngFor="let image of images()[listing.id]" [src]="image.imageUrl" [alt]="listing.title" style="width:100px;height:75px;object-fit:cover;border-radius:.35rem;" />
           </div>
         </div>
         <div style="display:grid;gap:.5rem;">
+          <button *ngIf="listing.status === 'DRAFT' || listing.status === 'REJECTED'" class="btn btn-secondary" type="button" (click)="edit(listing)" [disabled]="saving()">
+            Edit
+          </button>
           <label *ngIf="listing.status === 'DRAFT' || listing.status === 'REJECTED'" class="btn btn-secondary">
             Add image
             <input type="file" accept="image/jpeg,image/png,image/webp" (change)="uploadImage(listing, $event)" [disabled]="saving()" style="display:none;" />
@@ -133,8 +151,16 @@ export class EquipmentListingComponent implements OnInit {
     city: ['', Validators.required],
     postalCode: ['', Validators.required],
     latitude: [null as number | null, [Validators.required, Validators.min(-90), Validators.max(90)]],
-    longitude: [null as number | null, [Validators.required, Validators.min(-180), Validators.max(180)]]
+    longitude: [null as number | null, [Validators.required, Validators.min(-180), Validators.max(180)]],
+    specifications: this.formBuilder.nonNullable.array([this.specificationRow()])
   });
+
+  /** Listing being edited, or null while creating a new one. */
+  readonly editingId = signal<string | null>(null);
+
+  get specifications(): FormArray<FormGroup<{ name: FormControl<string>; value: FormControl<string> }>> {
+    return this.form.controls.specifications;
+  }
 
   ngOnInit(): void {
     this.catalogue.categories().subscribe({
@@ -144,7 +170,60 @@ export class EquipmentListingComponent implements OnInit {
     this.loadListings();
   }
 
-  create(): void {
+  addSpecification(): void {
+    this.specifications.push(this.specificationRow());
+  }
+
+  removeSpecification(index: number): void {
+    this.specifications.removeAt(index);
+    if (this.specifications.length === 0) {
+      this.addSpecification();
+    }
+  }
+
+  edit(listing: EquipmentListing): void {
+    this.editingId.set(listing.id);
+    this.error.set(null);
+    this.success.set(null);
+    this.resetForm();
+    this.form.patchValue({
+      categoryId: listing.categoryId,
+      title: listing.title,
+      description: listing.description,
+      manufacturer: listing.manufacturer,
+      modelNumber: listing.modelNumber,
+      serialNumber: listing.serialNumber ?? '',
+      yearOfManufacture: listing.yearOfManufacture,
+      conditionGrade: listing.conditionGrade,
+      baseDailyRate: listing.baseDailyRate,
+      baseWeeklyRate: listing.baseWeeklyRate,
+      securityDeposit: listing.securityDeposit,
+      minimumRentalDays: listing.minimumRentalDays,
+      deliverySupported: listing.deliverySupported,
+      pickupSupported: listing.pickupSupported,
+      deliveryChargeFlat: listing.deliveryChargeFlat,
+      addressLine: listing.addressLine ?? '',
+      city: listing.city,
+      postalCode: listing.postalCode,
+      latitude: listing.latitude,
+      longitude: listing.longitude
+    });
+    const specs = Object.entries(listing.specifications ?? {});
+    if (specs.length) {
+      this.specifications.clear();
+      for (const [name, value] of specs) {
+        this.specifications.push(this.specificationRow(name, String(value ?? '')));
+      }
+    }
+    document.getElementById('listing-form')?.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  cancelEdit(): void {
+    this.editingId.set(null);
+    this.resetForm();
+  }
+
+  save(): void {
     this.error.set(null);
     this.success.set(null);
     if (this.form.invalid) {
@@ -152,39 +231,62 @@ export class EquipmentListingComponent implements OnInit {
       return;
     }
     this.saving.set(true);
-    this.catalogue.createListing(this.toRequest()).subscribe({
+    const editingId = this.editingId();
+    const request = editingId
+      ? this.catalogue.updateListing(editingId, this.toRequest())
+      : this.catalogue.createListing(this.toRequest());
+    request.subscribe({
       next: listing => {
-        this.listings.update(current => [listing, ...current]);
-        this.form.reset({
-          categoryId: '',
-          title: '',
-          description: '',
-          manufacturer: '',
-          modelNumber: '',
-          serialNumber: '',
-          yearOfManufacture: null,
-          conditionGrade: 'GOOD',
-          baseDailyRate: null,
-          baseWeeklyRate: null,
-          securityDeposit: 0,
-          minimumRentalDays: 1,
-          deliverySupported: false,
-          pickupSupported: true,
-          deliveryChargeFlat: 0,
-          addressLine: '',
-          city: '',
-          postalCode: '',
-          latitude: null,
-          longitude: null
-        });
-        this.success.set('Draft saved. Submit it when you are ready for review.');
+        if (editingId) {
+          this.replaceListing(listing);
+          this.success.set('Listing updated. Submit it again when you are ready for review.');
+        } else {
+          this.listings.update(current => [listing, ...current]);
+          this.success.set('Draft saved. Submit it when you are ready for review.');
+        }
+        this.editingId.set(null);
+        this.resetForm();
         this.saving.set(false);
       },
-      error: () => {
-        this.error.set('The listing could not be saved. Verify your owner account and try again.');
+      error: (failure: Error) => {
+        this.error.set(failure.message || 'The listing could not be saved. Verify your owner account and try again.');
         this.saving.set(false);
       }
     });
+  }
+
+  private specificationRow(name = '', value = '') {
+    return this.formBuilder.nonNullable.group({
+      name: [name, Validators.maxLength(100)],
+      value: [value, Validators.maxLength(255)]
+    });
+  }
+
+  private resetForm(): void {
+    this.form.reset({
+      categoryId: '',
+      title: '',
+      description: '',
+      manufacturer: '',
+      modelNumber: '',
+      serialNumber: '',
+      yearOfManufacture: null,
+      conditionGrade: 'GOOD',
+      baseDailyRate: null,
+      baseWeeklyRate: null,
+      securityDeposit: 0,
+      minimumRentalDays: 1,
+      deliverySupported: false,
+      pickupSupported: true,
+      deliveryChargeFlat: 0,
+      addressLine: '',
+      city: '',
+      postalCode: '',
+      latitude: null,
+      longitude: null
+    });
+    this.specifications.clear();
+    this.addSpecification();
   }
 
   submit(listing: EquipmentListing): void {
@@ -272,7 +374,9 @@ export class EquipmentListingComponent implements OnInit {
       serialNumber: value.serialNumber || null,
       yearOfManufacture: value.yearOfManufacture,
       conditionGrade: value.conditionGrade,
-      specifications: {},
+      specifications: Object.fromEntries(value.specifications
+        .filter(spec => spec.name.trim() && spec.value.trim())
+        .map(spec => [spec.name.trim(), spec.value.trim()])),
       baseDailyRate: value.baseDailyRate,
       baseWeeklyRate: value.baseWeeklyRate,
       securityDeposit: value.securityDeposit,

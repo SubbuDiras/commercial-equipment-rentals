@@ -30,7 +30,14 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
       }
 
       console.error(`[API Error ${error.status}]:`, errorMessage);
-      return throwError(() => new Error(errorMessage));
+      return throwError(() => new ApiError(errorMessage, error.status));
     })
   );
 };
+
+/** Error raised for failed API calls: the server's problem-detail message plus the HTTP status. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}

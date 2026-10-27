@@ -33,9 +33,16 @@ export const routes: Routes = [
     title: 'My Bookings'
   },
   {
+    path: 'bookings/:bookingId',
+    canActivate: [authGuard],
+    data: { roles: ['ROLE_RENTER', 'ROLE_OWNER', 'ROLE_ADMIN'] },
+    loadComponent: () => import('./features/bookings/booking-details.component').then(m => m.BookingDetailsComponent),
+    title: 'Booking'
+  },
+  {
     path: 'owner/onboarding',
     canActivate: [authGuard],
-    data: { role: 'ROLE_RENTER' },
+    data: { roles: ['ROLE_RENTER', 'ROLE_OWNER'] },
     loadComponent: () => import('./features/owner/owner-onboarding.component').then(m => m.OwnerOnboardingComponent),
     title: 'Owner Verification'
   },
@@ -46,7 +53,13 @@ export const routes: Routes = [
     loadChildren: () => Promise.resolve([
       {
         path: 'equipment',
-        loadComponent: () => import('./features/owner/equipment-listing.component').then(m => m.EquipmentListingComponent)
+        loadComponent: () => import('./features/owner/equipment-listing.component').then(m => m.EquipmentListingComponent),
+        title: 'My Listings'
+      },
+      {
+        path: 'bookings',
+        loadComponent: () => import('./features/owner/owner-bookings.component').then(m => m.OwnerBookingsComponent),
+        title: 'Bookings for My Equipment'
       }
     ])
   },
@@ -58,11 +71,37 @@ export const routes: Routes = [
     title: 'Listing Approval Queue'
   },
   {
+    path: 'admin/owners',
+    canActivate: [authGuard],
+    data: { role: 'ROLE_ADMIN' },
+    loadComponent: () => import('./features/admin/owner-review.component').then(m => m.OwnerReviewComponent),
+    title: 'Owner KYC'
+  },
+  {
+    path: 'admin/disputes',
+    canActivate: [authGuard],
+    data: { role: 'ROLE_ADMIN' },
+    loadComponent: () => import('./features/admin/dispute-queue.component').then(m => m.DisputeQueueComponent),
+    title: 'Damage Claims'
+  },
+  {
+    path: 'admin/disputes/:disputeId',
+    canActivate: [authGuard],
+    data: { role: 'ROLE_ADMIN' },
+    loadComponent: () => import('./features/admin/dispute-detail.component').then(m => m.DisputeDetailComponent),
+    title: 'Damage Claim'
+  },
+  {
     path: 'admin',
     canActivate: [authGuard],
     data: { role: 'ROLE_ADMIN' },
     component: PilotMetricsComponent,
     title: 'Marketplace Operations'
+  },
+  {
+    path: 'unauthorized',
+    loadComponent: () => import('./features/unauthorized/unauthorized.component').then(m => m.UnauthorizedComponent),
+    title: 'No Access'
   },
   {
     path: '**',
