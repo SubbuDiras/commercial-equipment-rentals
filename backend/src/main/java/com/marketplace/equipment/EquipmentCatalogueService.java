@@ -9,7 +9,9 @@ import org.springframework.context.ApplicationEventPublisher;
 import com.marketplace.exception.BadRequestException;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.storage.PrivateObjectStorage;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -25,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class EquipmentCatalogueService {
@@ -34,15 +37,18 @@ public class EquipmentCatalogueService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher events;
+    private final PrivateObjectStorage objectStorage;
 
     public EquipmentCatalogueService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
-            ApplicationEventPublisher events
+            ApplicationEventPublisher events,
+            PrivateObjectStorage objectStorage
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.events = events;
+        this.objectStorage = objectStorage;
     }
 
     @Transactional(readOnly = true)
@@ -180,7 +186,31 @@ public class EquipmentCatalogueService {
                         """,
                 this::mapPublicListing, pageArguments.toArray());
         int totalPages = (int) ((totalElements + size - 1) / size);
-        return new EquipmentListingPage(content, page, size, totalElements, totalPages);
+        return new EquipmentListingPage(withPrimaryImages(content), page, size, totalElements, totalPages);
+    }
+
+    /** Adds each listing's cover photo (the primary image, else the first uploaded one) with one query per page. */
+    private List<EquipmentListingResponse> withPrimaryImages(List<EquipmentListingResponse> listings) {
+        if (listings.isEmpty()) {
+            return listings;
+        }
+        String placeholders = listings.stream().map(ignored -> "?").collect(Collectors.joining(", "));
+        Map<String, String> objectKeys = new LinkedHashMap<>();
+        jdbcTemplate.query("""
+                        SELECT equipment_id, storage_object_key
+                        FROM equipment_images
+                        WHERE equipment_id IN (%s) AND uploaded_at IS NOT NULL
+                        ORDER BY is_primary DESC, display_order, id
+                        """.formatted(placeholders),
+                (RowCallbackHandler) resultSet -> objectKeys.putIfAbsent(
+                        resultSet.getString("equipment_id"), resultSet.getString("storage_object_key")),
+                listings.stream().map(EquipmentListingResponse::id).toArray());
+        return listings.stream()
+                .map(listing -> {
+                    String key = objectKeys.get(listing.id());
+                    return key == null ? listing : listing.withPrimaryImageUrl(objectStorage.presignGet(key, false));
+                })
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -480,6 +510,7 @@ public class EquipmentCatalogueService {
                 resultSet.getString("status"),
                 createdAt == null ? null : createdAt.toInstant(),
                 null,
+                null,
                 null);
     }
 
@@ -511,6 +542,7 @@ public class EquipmentCatalogueService {
                 null,
                 listing.status(),
                 listing.createdAt(),
+                null,
                 null,
                 null);
     }

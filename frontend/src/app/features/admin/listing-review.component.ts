@@ -22,12 +22,19 @@ import { EquipmentCatalogueService, EquipmentListing } from '../catalogue/equipm
         <p>{{ listing.city }} · {{ listing.baseDailyRate | currency:'INR' }}/day</p>
         <label *ngIf="rejectingId() === listing.id">
           Rejection reason
-          <input [(ngModel)]="rejectionReason" [name]="'reason-' + listing.id" maxlength="500" style="display:block;width:100%;padding:.6rem;margin:.35rem 0 1rem;" />
+          <input [(ngModel)]="rejectionReason" [name]="'reason-' + listing.id" maxlength="500" required aria-required="true"
+                 [attr.aria-invalid]="reasonMissing()" (ngModelChange)="reasonMissing.set(false)"
+                 [style.border-color]="reasonMissing() ? 'var(--color-danger)' : null"
+                 style="display:block;width:100%;padding:.6rem;margin:.35rem 0 .25rem;" />
         </label>
+        <small *ngIf="rejectingId() === listing.id" [attr.role]="reasonMissing() ? 'alert' : null"
+               [style.color]="reasonMissing() ? 'var(--color-danger)' : 'var(--color-text-muted)'" style="display:block;margin-bottom:1rem;">
+          {{ reasonMissing() ? 'Please enter a reason before you confirm the rejection.' : 'Required. The owner sees this reason.' }}
+        </small>
         <div style="display:flex;gap:.75rem;">
           <button class="btn btn-primary" type="button" (click)="review(listing, true)" [disabled]="saving()">Approve</button>
           <button *ngIf="rejectingId() !== listing.id" class="btn btn-secondary" type="button" (click)="startReject(listing.id)">Reject</button>
-          <button *ngIf="rejectingId() === listing.id" class="btn btn-secondary" type="button" (click)="review(listing, false)" [disabled]="saving() || !rejectionReason.trim()">Confirm rejection</button>
+          <button *ngIf="rejectingId() === listing.id" class="btn btn-secondary" type="button" (click)="review(listing, false)" [disabled]="saving()">Confirm rejection</button>
           <button *ngIf="rejectingId() === listing.id" class="btn btn-secondary" type="button" (click)="cancelReject()">Cancel</button>
         </div>
       </article>
@@ -43,6 +50,7 @@ export class ListingReviewComponent implements OnInit {
   readonly error = signal<string | null>(null);
   readonly rejectingId = signal<string | null>(null);
   rejectionReason = '';
+  readonly reasonMissing = signal(false);
 
   ngOnInit(): void {
     this.load();
@@ -51,17 +59,19 @@ export class ListingReviewComponent implements OnInit {
   startReject(id: string): void {
     this.rejectingId.set(id);
     this.rejectionReason = '';
+    this.reasonMissing.set(false);
   }
 
   cancelReject(): void {
     this.rejectingId.set(null);
     this.rejectionReason = '';
+    this.reasonMissing.set(false);
   }
 
   review(listing: EquipmentListing, approve: boolean): void {
     const reason = this.rejectionReason.trim();
     if (!approve && !reason) {
-      this.error.set('A rejection reason is required.');
+      this.reasonMissing.set(true);
       return;
     }
     this.saving.set(true);

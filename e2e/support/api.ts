@@ -24,7 +24,9 @@ export class Api {
 
   // Dev tools (dev/test profile only)
 
-  seedOwnerListing(): Promise<{ ownerProfileId: string; equipmentId: string; title: string; ownerRoleGranted: boolean }> {
+  seedOwnerListing(): Promise<{
+    ownerProfileId: string; equipmentId: string; title: string; ownerRoleGranted: boolean; photoAttached: boolean;
+  }> {
     return this.post('/api/v1/dev/seed/owner-listing');
   }
 

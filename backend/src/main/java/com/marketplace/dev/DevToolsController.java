@@ -39,4 +39,10 @@ public class DevToolsController {
     public DevToolsService.SeedResponse seedOwnerListing(@AuthenticationPrincipal Jwt jwt) {
         return devToolsService.seedOwnerListing(jwt);
     }
+
+    /** Attaches a matching sample picture to every listing that has no photo yet. */
+    @PostMapping("/seed/listing-photos")
+    public DevToolsService.SamplePhotosResponse addSamplePhotos() {
+        return devToolsService.addSamplePhotos();
+    }
 }

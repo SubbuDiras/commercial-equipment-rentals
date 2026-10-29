@@ -174,7 +174,7 @@ class OwnerOnboardingServiceTests {
         OwnerProfileDetailsResponse underReview = ownerOnboardingService.findMine(ownerJwt());
         assertThat(underReview.ownerProfileId()).isEqualTo(submitted.ownerProfileId());
         assertThat(underReview.status()).isEqualTo(OwnerVerificationStatus.UNDER_REVIEW.name());
-        assertThat(underReview.businessName()).isEqualTo("Bangalore Tool Rentals");
+        assertThat(underReview.businessName()).isEqualTo("Hyderabad Tool Rentals");
         assertThat(underReview.razorpayAccountLinked()).isFalse();
 
         ownerOnboardingService.reject(submitted.ownerProfileId(), adminJwt(), "Blurry PAN card.");
@@ -269,12 +269,12 @@ class OwnerOnboardingServiceTests {
     private static OwnerOnboardingRequest request() {
         return new OwnerOnboardingRequest(
                 "PROPRIETORSHIP",
-                "Bangalore Tool Rentals",
-                "29ABCDE1234F1Z5",
+                "Hyderabad Tool Rentals",
+                "36ABCDE1234F1Z5",
                 "ABCDE1234F",
                 "987654321098",
                 "HDFC0001234",
-                "Bangalore Tool Rentals",
+                "Hyderabad Tool Rentals",
                 "Suresh",
                 "Patel",
                 "+919876543210");

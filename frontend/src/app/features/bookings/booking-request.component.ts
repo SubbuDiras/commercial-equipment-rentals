@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { invalidFieldsMessage } from '../../shared/form-feedback';
 import { Booking, BookingApiService, BookingRequest } from './booking-api.service';
 
 @Component({
@@ -63,7 +64,7 @@ import { Booking, BookingApiService, BookingRequest } from './booking-api.servic
           </div>
         </ng-container>
         <p *ngIf="error()" role="alert" style="color: var(--color-danger);">{{ error() }}</p>
-        <button class="btn btn-primary" type="submit" [disabled]="form.invalid || submitting()">
+        <button class="btn btn-primary" type="submit" [disabled]="submitting()">
           {{ submitting() ? 'Submitting…' : 'Request booking' }}
         </button>
       </form>
@@ -119,11 +120,19 @@ export class BookingRequestComponent {
   });
 
   submit(): void {
-    if (this.form.invalid || this.submitting()) {
-      this.form.markAllAsTouched();
+    if (this.submitting()) {
+      return;
+    }
+    const invalid = invalidFieldsMessage(this.form, { startTime: 'Start', endTime: 'End', deliveryOption: 'Collection / delivery' });
+    if (invalid) {
+      this.error.set(invalid);
       return;
     }
     const value = this.form.getRawValue();
+    if (new Date(value.endTime!) <= new Date(value.startTime!)) {
+      this.error.set('The end must be later than the start.');
+      return;
+    }
     const request: BookingRequest = {
       equipmentId: value.equipmentId!,
       startTime: new Date(value.startTime!).toISOString(),

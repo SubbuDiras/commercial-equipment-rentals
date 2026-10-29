@@ -24,7 +24,7 @@ interface HealthResponse {
             <span style="display: inline-block; width: 8px; height: 8px; background-color: #10b981; border-radius: 50%;"></span>
             <span><strong>Backend Connected:</strong> {{ backendHealth()?.service }} ({{ backendHealth()?.version }}) - Status: {{ backendHealth()?.status }}</span>
           </div>
-          <span>Bengaluru Pilot Preparation</span>
+          <span>India-wide Launch Preparation</span>
         </div>
       </div>
 
@@ -33,7 +33,7 @@ interface HealthResponse {
         <div class="container" style="text-align: center; max-width: 900px;">
           
           <div style="display: inline-flex; align-items: center; gap: 0.5rem; background-color: #eff6ff; color: #1e40af; padding: 0.375rem 0.875rem; border-radius: var(--radius-full); font-size: 0.8125rem; font-weight: 600; margin-bottom: 1.5rem; border: 1px solid #bfdbfe;">
-            <span>Commercial Equipment Rental — Bengaluru Pilot Preparation</span>
+            <span>Commercial Equipment Rental — Across India</span>
           </div>
 
           <h1 style="font-size: 3.25rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 1.25rem; color: #0f172a;">
@@ -44,7 +44,7 @@ interface HealthResponse {
           </h1>
 
           <p style="font-size: 1.125rem; color: var(--color-text-muted); line-height: 1.6; margin-bottom: 2.5rem;">
-            We are preparing a Bengaluru marketplace for commercial equipment rentals. Listings, availability, final prices, and invoicing will be shown when owner verification and pilot launch checks are complete.
+            We are preparing an India-wide marketplace for commercial equipment rentals. Listings, availability, final prices, and invoicing will be shown in each city once owner verification and launch checks for that area are complete.
           </p>
 
           <!-- Search Filter Box -->
@@ -72,7 +72,7 @@ interface HealthResponse {
                 <label style="display: block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: 0.5rem;">
                   Jobsite Location
                 </label>
-                <input disabled type="text" [(ngModel)]="selectedLocation" placeholder="Bengaluru / Whitefield / EC" style="width: 100%; padding: 0.625rem; border-radius: var(--radius-md); border: 1px solid var(--color-border); font-size: 0.875rem;" />
+                <input disabled type="text" [(ngModel)]="selectedLocation" placeholder="City, e.g. Hyderabad / Mumbai / Pune" style="width: 100%; padding: 0.625rem; border-radius: var(--radius-md); border: 1px solid var(--color-border); font-size: 0.875rem;" />
               </div>
 
               <div>
@@ -102,7 +102,7 @@ interface HealthResponse {
               <div style="font-size: 0.8125rem; font-weight: 700; text-transform: uppercase; color: var(--color-primary-light); margin-bottom: 0.25rem;">
                 Illustrative Category Preview
               </div>
-              <h2 style="font-size: 2rem;">Small Construction Equipment (Bengaluru Pilot)</h2>
+              <h2 style="font-size: 2rem;">Small Construction Equipment</h2>
             </div>
             <span style="font-weight: 600; font-size: 0.875rem; color: var(--color-text-muted);">Listings will appear after launch approval</span>
           </div>
@@ -215,7 +215,7 @@ export class HomeComponent implements OnInit {
   private http = inject(HttpClient);
   
   selectedCategory = 'all';
-  selectedLocation = 'Bengaluru Urban';
+  selectedLocation = '';
   startDate = new Date().toISOString().split('T')[0];
   backendHealth = signal<HealthResponse | null>(null);
 

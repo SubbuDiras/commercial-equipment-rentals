@@ -45,11 +45,12 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
 - **Access:** Public
 - **Query Parameters:**
   - `categoryId` (UUID, optional)
-  - `city` (string, optional, e.g. "Bengaluru")
+  - `city` (string, optional, e.g. "Hyderabad")
   - `minRate` / `maxRate` (BigDecimal, optional)
   - `startTime` / `endTime` (ISO-8601 instants, optional pair); when both are present, results exclude listings with an overlapping blocking booking or unexpired hold.
   - `page` (int, default: 0), `size` (int, default: 20)
 - **Response `200 OK`:** `{ "content": [...], "page": 0, "size": 20, "totalElements": 0, "totalPages": 0 }`. Results include only `ACTIVE` listings belonging to `VERIFIED` owners. Date filters must be supplied together and use half-open interval overlap semantics.
+- Each result includes `primaryImageUrl`: a short-lived display URL for the listing's cover photo (the primary image, else the first uploaded one), or `null` when the listing has no photos. This field is `null` everywhere except search results.
 
 #### `GET /api/v1/equipment/{equipmentId}/images`
 - **Access:** Public, for active listings belonging to verified owners.
@@ -70,6 +71,13 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
 - **Description:** Check an active, verified-owner listing for reservations that overlap the requested half-open time interval (`existing.start < requested.end` and `existing.end > requested.start`).
 - **Response `200 OK`:** `{ "equipmentId": "...", "startTime": "...", "endTime": "...", "available": true }`. This is an informational check; final reservation is rechecked under the equipment row lock when creating a booking.
 
+#### `GET /api/v1/me` and `PUT /api/v1/me`
+- **Access:** Any signed-in user (renter, owner or admin), for their own profile only.
+- **`GET` response `200 OK`:** `{ "firstName": "Meera", "lastName": "Rao", "email": "meera@example.com", "phone": "+919876543210", "roles": ["ROLE_RENTER"], "memberSince": "2026-10-29T06:00:00Z", "signInNameUpdated": null }`. `phone` is `null` when not added; `roles` are the application roles in the caller's token.
+- **`PUT` body:** `{ "firstName": "Meera", "lastName": "Rao-Iyer", "phone": "+919876543210" }`. Names are required (at most 100 characters); `phone` is optional, 8 to 15 digits with an optional leading `+`, and an empty string removes it. Email is the sign-in identity and is changed in Keycloak's account page, not here.
+- **`PUT` response `200 OK`:** the updated profile. `signInNameUpdated` is `true` when the new name was also copied to Keycloak (new tokens carry it), `false` when the Keycloak service account is unavailable; the marketplace keeps the change either way. Audited as `USER_PROFILE_UPDATED`.
+- **Errors:** `400` for invalid fields; `409` when the phone number belongs to another account.
+
 ---
 
 ### 2.2 Owner Management & Catalogue Endpoints
@@ -81,12 +89,12 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
 ```json
 {
   "businessType": "PROPRIETORSHIP",
-  "companyName": "Bangalore Tool Rentals",
-  "gstin": "29ABCDE1234F1Z5",
+  "companyName": "Hyderabad Tool Rentals",
+  "gstin": "36ABCDE1234F1Z5",
   "pan": "ABCDE1234F",
   "bankAccountNumber": "987654321098",
   "bankIfsc": "HDFC0001234",
-  "bankAccountHolderName": "Bangalore Tool Rentals",
+  "bankAccountHolderName": "Hyderabad Tool Rentals",
   "firstName": "Suresh",
   "lastName": "Patel",
   "phone": "+919876543210"
@@ -105,7 +113,7 @@ The account's `sub` and `email` are taken from the verified Keycloak JWT. Contac
   "ownerProfileId": "5d0c7a1e-4f0b-4a51-9a51-1f2c3d4e5f60",
   "status": "UNDER_REVIEW",
   "businessType": "PROPRIETORSHIP",
-  "businessName": "Bangalore Tool Rentals",
+  "businessName": "Hyderabad Tool Rentals",
   "rejectionReason": null,
   "razorpayAccountLinked": false,
   "submittedAt": "2026-10-20T09:15:00Z",
@@ -144,7 +152,7 @@ The account's `sub` and `email` are taken from the verified Keycloak JWT. Contac
   "firstName": "Suresh",
   "lastName": "Patel",
   "email": "owner@example.com",
-  "businessName": "Bangalore Tool Rentals",
+  "businessName": "Hyderabad Tool Rentals",
   "businessType": "PROPRIETORSHIP",
   "status": "VERIFIED",
   "submittedAt": "2026-10-20T09:15:00Z",
@@ -185,11 +193,11 @@ If Keycloak is unreachable or the service account is not configured, the approva
   "deliverySupported": true,
   "pickupSupported": true,
   "deliveryChargeFlat": 350.00,
-  "addressLine": "Shop 14, Ring Road, Whitefield",
-  "city": "Bengaluru",
-  "postalCode": "560066",
-  "latitude": 12.9698,
-  "longitude": 77.7499
+  "addressLine": "Shop 14, Cyber Towers Road, HITEC City",
+  "city": "Hyderabad",
+  "postalCode": "500081",
+  "latitude": 17.4474,
+  "longitude": 78.3762
 }
 ```
 - **Response `201 Created`:** Listing DTO created in `DRAFT` status. A valid active category is required.
@@ -245,9 +253,9 @@ Owner booking endpoints (list, accept, reject) are in section 2.3.
   "deliveryAddress": {
     "siteContactName": "Ramesh Kumar",
     "siteContactPhone": "+919876543210",
-    "addressLine": "Plot 42, Prestige Tech Park, Marathahalli",
-    "city": "Bengaluru",
-    "postalCode": "560103"
+    "addressLine": "Plot 42, Financial District, Gachibowli",
+    "city": "Hyderabad",
+    "postalCode": "500032"
   }
 }
 ```

@@ -3,6 +3,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ConfirmDialogComponent } from '../../shared/confirm-dialog.component';
+import { invalidFieldsMessage } from '../../shared/form-feedback';
 import { InrPipe } from '../../shared/inr.pipe';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
 import { DisputeApiService, DisputeDetail } from './dispute-api.service';
@@ -70,15 +71,17 @@ import { DisputeApiService, DisputeDetail } from './dispute-api.service';
             <h2 style="font-size: 1.1rem;">Resolve</h2>
             <p class="muted">The deduction goes to the owner; the rest of the deposit is refunded to the renter.
               It cannot exceed {{ maxDeduction() | inr }}.</p>
-            <form [formGroup]="form" (ngSubmit)="confirming.set(true)" style="display: grid; gap: .85rem; margin-top: .75rem;">
+            <form [formGroup]="form" (ngSubmit)="askToResolve()" style="display: grid; gap: .85rem; margin-top: .75rem;">
               <label>Deduction from deposit (₹)
-                <input type="number" min="0" step="0.01" [max]="maxDeduction()" formControlName="approvedDeductionAmount" class="form-control" />
+                <input type="number" min="0" step="0.01" formControlName="approvedDeductionAmount" class="form-control" />
               </label>
               <label>Decision notes (shared with both parties)
                 <textarea rows="3" maxlength="2000" formControlName="resolutionNotes" class="form-control"></textarea>
               </label>
-              <button type="submit" class="btn btn-primary" style="justify-self: start;"
-                      [disabled]="form.invalid || (form.controls.approvedDeductionAmount.value ?? 0) > maxDeduction()">Resolve claim</button>
+              @if (formError()) {
+                <div class="alert alert-error" role="alert">{{ formError() }}</div>
+              }
+              <button type="submit" class="btn btn-primary" style="justify-self: start;" [disabled]="busy()">Resolve claim</button>
             </form>
           </section>
         }
@@ -116,6 +119,7 @@ export class DisputeDetailComponent implements OnInit {
   readonly busy = signal(false);
   readonly confirming = signal(false);
   readonly error = signal<string | null>(null);
+  readonly formError = signal<string | null>(null);
   readonly notice = signal<string | null>(null);
 
   readonly maxDeduction = computed(() => {
@@ -130,6 +134,19 @@ export class DisputeDetailComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
+  }
+
+  /** Checks the decision, then opens the confirmation; problems are explained beside the button. */
+  askToResolve(): void {
+    const invalid = invalidFieldsMessage(this.form,
+      { approvedDeductionAmount: 'Deduction from deposit (₹)', resolutionNotes: 'Decision notes' });
+    const deduction = this.form.controls.approvedDeductionAmount.value ?? 0;
+    this.formError.set(invalid ?? (deduction > this.maxDeduction()
+      ? `The deduction cannot be more than ₹${this.maxDeduction().toLocaleString('en-IN')}.`
+      : null));
+    if (!this.formError()) {
+      this.confirming.set(true);
+    }
   }
 
   resolve(): void {

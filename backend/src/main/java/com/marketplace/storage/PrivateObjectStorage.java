@@ -2,7 +2,9 @@ package com.marketplace.storage;
 
 import com.marketplace.exception.ConflictException;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -48,6 +50,28 @@ public class PrivateObjectStorage {
                         .putObjectRequest(putObject)
                         .build());
         return new PresignedUpload(presigned.url().toString(), expiresAt);
+    }
+
+    /** Server-side upload, for content the backend itself supplies (e.g. dev sample photos). */
+    public void put(String objectKey, String contentType, byte[] content) {
+        if (content.length < 1 || content.length > MAX_OBJECT_BYTES) {
+            throw new ConflictException("Private object must be between 1 byte and 10 MB.");
+        }
+        s3Client.putObject(PutObjectRequest.builder()
+                        .bucket(properties.bucketName())
+                        .key(objectKey)
+                        .contentType(contentType)
+                        .contentLength((long) content.length)
+                        .build(),
+                RequestBody.fromBytes(content));
+    }
+
+    /** Removes an object; succeeds when it is already gone. */
+    public void delete(String objectKey) {
+        s3Client.deleteObject(DeleteObjectRequest.builder()
+                .bucket(properties.bucketName())
+                .key(objectKey)
+                .build());
     }
 
     public boolean existsWithinLimit(String objectKey) {

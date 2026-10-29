@@ -87,7 +87,7 @@ const TABS = [
                        [(ngModel)]="accountIds[owner.ownerProfileId]" pattern="acc_[A-Za-z0-9]{1,60}" />
               </label>
               <button type="button" class="btn btn-secondary" (click)="fakeAccount(owner.ownerProfileId)">Generate fake ID</button>
-              <button type="submit" class="btn btn-primary" [disabled]="saving() || !validAccount(owner.ownerProfileId)">Save</button>
+              <button type="submit" class="btn btn-primary" [disabled]="saving()">Save</button>
             </form>
           }
         </article>
@@ -184,11 +184,16 @@ export class OwnerReviewComponent implements OnInit {
   }
 
   validAccount(ownerProfileId: string): boolean {
-    return /^acc_[A-Za-z0-9]{1,60}$/.test(this.accountIds[ownerProfileId] ?? '');
+    return /^acc_[A-Za-z0-9]{1,60}$/.test((this.accountIds[ownerProfileId] ?? '').trim());
   }
 
   linkAccount(owner: OwnerReview): void {
-    const accountId = this.accountIds[owner.ownerProfileId];
+    const accountId = (this.accountIds[owner.ownerProfileId] ?? '').trim();
+    if (!this.validAccount(owner.ownerProfileId)) {
+      this.notice.set(null);
+      this.error.set('Enter a Razorpay linked account ID such as acc_ABC123 (letters and digits after "acc_"), or click Generate fake ID.');
+      return;
+    }
     this.saving.set(true);
     this.error.set(null);
     this.api.linkRazorpayAccount(owner.ownerProfileId, accountId).subscribe({

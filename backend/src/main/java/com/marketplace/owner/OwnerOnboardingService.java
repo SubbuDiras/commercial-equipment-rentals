@@ -63,6 +63,10 @@ public class OwnerOnboardingService {
                         userId, subject, email, request.phone(), request.firstName(), request.lastName());
             } else if (ownerProfileExists(userId)) {
                 throw new ConflictException("An owner profile already exists for this account.");
+            } else {
+                // The row was created on an earlier visit, from the sign-in token; keep what the applicant just entered.
+                jdbcTemplate.update("UPDATE users SET phone = ?, first_name = ?, last_name = ? WHERE id = ?",
+                        request.phone(), request.firstName(), request.lastName(), userId);
             }
 
             String organizationId = UUID.randomUUID().toString();
@@ -93,7 +97,7 @@ public class OwnerOnboardingService {
             events.publishEvent(NotificationEvent.of(NotificationType.KYC_SUBMITTED, profileId));
             return new OwnerProfileResponse(profileId, OwnerVerificationStatus.UNDER_REVIEW.name(), Instant.now());
         } catch (DataIntegrityViolationException exception) {
-            throw new ConflictException("The submitted owner details conflict with an existing account or organization.");
+            throw new ConflictException(duplicateDetailsMessage(exception));
         }
     }
 
@@ -296,5 +300,20 @@ public class OwnerOnboardingService {
 
     private static String emptyToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /** Names the duplicated detail, from the unique constraint the database reports, so the applicant can fix it. */
+    static String duplicateDetailsMessage(DataIntegrityViolationException exception) {
+        String cause = String.valueOf(exception.getMostSpecificCause().getMessage()).toLowerCase(java.util.Locale.ROOT);
+        if (cause.contains("uk_users_phone")) {
+            return "This phone number is already registered to another account. Use a different phone number.";
+        }
+        if (cause.contains("uk_org_gstin")) {
+            return "This GSTIN is already registered to another business. Check the GSTIN, or leave it blank.";
+        }
+        if (cause.contains("uk_owner_user")) {
+            return "You have already submitted an owner application. Reload the page to see its status.";
+        }
+        return "The submitted owner details conflict with an existing account or organization.";
     }
 }

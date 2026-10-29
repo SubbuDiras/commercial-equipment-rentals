@@ -17,6 +17,45 @@ const DOCUMENT_TYPES = [
   { value: 'OTHER', label: 'Other' }
 ];
 
+type FieldName = 'firstName' | 'lastName' | 'phone' | 'gstin' | 'pan'
+  | 'bankAccountHolderName' | 'bankAccountNumber' | 'bankIfsc';
+
+interface FieldSpec {
+  name: FieldName;
+  label: string;
+  hint: string;
+  example?: string;
+  maxLength?: number;
+  uppercase?: boolean;
+  numeric?: boolean;
+}
+
+const PERSONAL_FIELDS: FieldSpec[] = [
+  { name: 'firstName', label: 'First name', hint: '', maxLength: 100 },
+  { name: 'lastName', label: 'Last name', hint: '', maxLength: 100 },
+  { name: 'phone', label: 'Phone', hint: 'Mobile number with country code.', example: '+919876543210', maxLength: 20 },
+  { name: 'gstin', label: 'GSTIN (optional)', hint: '15 letters and digits.', example: '29ABCDE1234F1Z5', maxLength: 15, uppercase: true },
+  { name: 'pan', label: 'PAN (optional)', hint: '5 letters, 4 digits, 1 letter.', example: 'ABCDE1234F', maxLength: 10, uppercase: true }
+];
+
+const PAYOUT_FIELDS: FieldSpec[] = [
+  { name: 'bankAccountHolderName', label: 'Account holder name', hint: 'As printed on the bank account.', maxLength: 255 },
+  { name: 'bankAccountNumber', label: 'Bank account number', hint: '8 to 34 digits.', example: '123456789012', maxLength: 40, numeric: true },
+  { name: 'bankIfsc', label: 'IFSC code', hint: '4 letters, a zero, then 6 letters or digits.', example: 'HDFC0001234', maxLength: 11, uppercase: true }
+];
+
+/** Shown when a filled-in field has the wrong format; the backend applies the same rules. */
+const FIELD_MESSAGES: Record<FieldName, string> = {
+  firstName: 'Use at most 100 characters.',
+  lastName: 'Use at most 100 characters.',
+  phone: 'Use at most 20 characters, e.g. +919876543210.',
+  gstin: 'A GSTIN is 15 letters and digits, e.g. 29ABCDE1234F1Z5. Leave it blank if you have none.',
+  pan: 'A PAN looks like ABCDE1234F. Leave it blank if you have none.',
+  bankAccountHolderName: 'Use at most 255 characters.',
+  bankAccountNumber: 'Enter 8 to 34 digits only, e.g. 123456789012.',
+  bankIfsc: 'An IFSC looks like HDFC0001234: 4 letters, a zero, then 6 letters or digits.'
+};
+
 @Component({
   selector: 'app-owner-onboarding',
   standalone: true,
@@ -104,7 +143,7 @@ const DOCUMENT_TYPES = [
         }
       } @else {
         <p class="muted">Submit your business and payout details for manual review. You can publish listings once your owner profile is verified.</p>
-        <form [formGroup]="form" (ngSubmit)="submit()" class="card" style="display:grid;gap:1rem;padding:1.5rem;margin-top:1.5rem;">
+        <form [formGroup]="form" (ngSubmit)="submit()" novalidate class="card" style="display:grid;gap:1rem;padding:1.5rem;margin-top:1.5rem;">
           <label>Account type
             <select formControlName="businessType" class="form-control">
               <option value="INDIVIDUAL">Individual</option>
@@ -117,22 +156,41 @@ const DOCUMENT_TYPES = [
             <input formControlName="companyName" maxlength="255" class="form-control" />
           </label>
           <div class="grid grid-cols-2" style="gap:1rem;">
-            <label>First name<input formControlName="firstName" class="form-control" /></label>
-            <label>Last name<input formControlName="lastName" class="form-control" /></label>
-            <label>Phone<input formControlName="phone" maxlength="20" class="form-control" /></label>
-            <label>GSTIN (optional)<input formControlName="gstin" maxlength="15" class="form-control" style="text-transform:uppercase;" /></label>
-            <label>PAN (optional)<input formControlName="pan" maxlength="10" class="form-control" style="text-transform:uppercase;" /></label>
+            @for (field of personalFields; track field.name) {
+              <div>
+                <label>{{ field.label }}
+                  <input [formControlName]="field.name" [attr.maxlength]="field.maxLength" [attr.placeholder]="field.example"
+                         [attr.aria-invalid]="!!fieldError(field.name)" [attr.aria-describedby]="field.name + '-hint'"
+                         class="form-control" [style.text-transform]="field.uppercase ? 'uppercase' : null"
+                         [style.border-color]="fieldError(field.name) ? 'var(--color-danger)' : null" />
+                </label>
+                <small [id]="field.name + '-hint'" [style.color]="fieldError(field.name) ? 'var(--color-danger)' : 'var(--color-text-muted)'">
+                  {{ fieldError(field.name) || field.hint }}
+                </small>
+              </div>
+            }
           </div>
           <h2 style="font-size:1.2rem;">Payout account details</h2>
-          <label>Account holder name<input formControlName="bankAccountHolderName" class="form-control" /></label>
           <div class="grid grid-cols-2" style="gap:1rem;">
-            <label>Bank account number<input formControlName="bankAccountNumber" inputmode="numeric" class="form-control" /></label>
-            <label>IFSC code<input formControlName="bankIfsc" maxlength="11" class="form-control" style="text-transform:uppercase;" /></label>
+            @for (field of payoutFields; track field.name) {
+              <div>
+                <label>{{ field.label }}
+                  <input [formControlName]="field.name" [attr.maxlength]="field.maxLength" [attr.placeholder]="field.example"
+                         [attr.inputmode]="field.numeric ? 'numeric' : null"
+                         [attr.aria-invalid]="!!fieldError(field.name)" [attr.aria-describedby]="field.name + '-hint'"
+                         class="form-control" [style.text-transform]="field.uppercase ? 'uppercase' : null"
+                         [style.border-color]="fieldError(field.name) ? 'var(--color-danger)' : null" />
+                </label>
+                <small [id]="field.name + '-hint'" [style.color]="fieldError(field.name) ? 'var(--color-danger)' : 'var(--color-text-muted)'">
+                  {{ fieldError(field.name) || field.hint }}
+                </small>
+              </div>
+            }
           </div>
           @if (error()) {
             <div class="alert alert-error" role="alert">{{ error() }}</div>
           }
-          <button class="btn btn-primary" type="submit" [disabled]="form.invalid || submitting()">
+          <button class="btn btn-primary" type="submit" [disabled]="submitting()">
             {{ submitting() ? 'Submitting…' : 'Submit for verification' }}
           </button>
         </form>
@@ -146,6 +204,8 @@ export class OwnerOnboardingComponent implements OnInit {
   readonly auth = inject(AuthService);
 
   readonly documentTypes = DOCUMENT_TYPES;
+  readonly personalFields = PERSONAL_FIELDS;
+  readonly payoutFields = PAYOUT_FIELDS;
   readonly loading = signal(true);
   readonly submitting = signal(false);
   readonly error = signal<string | null>(null);
@@ -172,10 +232,24 @@ export class OwnerOnboardingComponent implements OnInit {
     this.loadProfile();
   }
 
+  /** The message for a field the user has left or tried to submit, or null when it is fine. */
+  fieldError(name: FieldName): string | null {
+    const control = this.form.controls[name];
+    if (!control.invalid || !control.touched) {
+      return null;
+    }
+    if (control.hasError('required')) {
+      return 'Required.';
+    }
+    return FIELD_MESSAGES[name];
+  }
+
   submit(): void {
     this.error.set(null);
+    this.normalise();
     if (this.form.invalid) {
       this.form.markAllAsTouched();
+      this.error.set('Please correct the highlighted fields.');
       return;
     }
     this.submitting.set(true);
@@ -222,6 +296,22 @@ export class OwnerOnboardingComponent implements OnInit {
 
   typeLabel(value: string): string {
     return DOCUMENT_TYPES.find(type => type.value === value)?.label ?? value;
+  }
+
+  /** Accepts what people usually type: stray spaces, spaced-out account numbers, lower-case codes. */
+  private normalise(): void {
+    const value = this.form.getRawValue();
+    this.form.patchValue({
+      companyName: value.companyName.trim(),
+      firstName: value.firstName.trim(),
+      lastName: value.lastName.trim(),
+      phone: value.phone.replace(/[\s-]/g, ''),
+      gstin: value.gstin.replace(/\s/g, '').toUpperCase(),
+      pan: value.pan.replace(/\s/g, '').toUpperCase(),
+      bankAccountHolderName: value.bankAccountHolderName.trim(),
+      bankAccountNumber: value.bankAccountNumber.replace(/[\s-]/g, ''),
+      bankIfsc: value.bankIfsc.replace(/\s/g, '').toUpperCase()
+    });
   }
 
   private loadProfile(): void {

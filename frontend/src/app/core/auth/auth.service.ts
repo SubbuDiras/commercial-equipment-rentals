@@ -156,6 +156,15 @@ export class AuthService {
       });
   }
 
+  /** Keycloak's own account page, where users change their email address and password. */
+  public readonly accountConsoleUrl = `${authCodeFlowConfig.issuer}/account`;
+
+  /** Fetches fresh tokens so changes made on the server (a new name, a granted role) show without signing in again. */
+  public async refreshClaims(): Promise<void> {
+    await this.oauthService.refreshToken();
+    this.extractUserClaims();
+  }
+
   public logout(): void {
     this.oauthService.logOut();
     this.userSignal.set(null);

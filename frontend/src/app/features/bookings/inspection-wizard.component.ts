@@ -2,6 +2,7 @@ import { DatePipe } from '@angular/common';
 import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
+import { invalidFieldsMessage } from '../../shared/form-feedback';
 import { BookingApiService, BookingDetails, InspectionType, OtpChallenge } from './booking-api.service';
 
 const MIN_PHOTOS = 4;
@@ -101,7 +102,7 @@ const CHECKLIST = [
               <small class="muted">Sent to your email when they generated it.</small>
             </label>
           </div>
-          <button type="submit" class="btn btn-primary" [disabled]="form.invalid || busy()">
+          <button type="submit" class="btn btn-primary" [disabled]="busy()">
             {{ busy() ? 'Submitting…' : 'Confirm ' + label().toLowerCase() }}
           </button>
         </form>
@@ -190,6 +191,17 @@ export class InspectionWizardComponent {
   }
 
   submit(): void {
+    const codes = this.form.getRawValue();
+    this.form.patchValue({ myCode: codes.myCode.replace(/\s/g, ''), otherCode: codes.otherCode.replace(/\s/g, '') });
+    const invalid = invalidFieldsMessage(this.form, {
+      hourMeterReading: 'Hour meter reading',
+      myCode: 'Your code (6 digits)',
+      otherCode: `${this.otherSideTitle()}'s code (6 digits)`
+    });
+    if (invalid) {
+      this.error.set(invalid);
+      return;
+    }
     const value = this.form.getRawValue();
     const ownerOtp = this.isOwner() ? value.myCode : value.otherCode;
     const renterOtp = this.isOwner() ? value.otherCode : value.myCode;

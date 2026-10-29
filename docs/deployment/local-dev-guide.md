@@ -10,26 +10,28 @@ Paths below assume the repository is at `D:\Rentals\commercial-equipment-rentals
 
 | Service | Where it runs | Address | Notes |
 |---|---|---|---|
-| MySQL | Windows service **MySQL80** | `localhost:3306`, DB `marketplace_dev` | Flyway creates and migrates the schema on backend start |
-| Keycloak | Docker container **`keycloak-clean`** (26.x) | `http://localhost:8080`, realm `marketplace-realm` | Configured by hand (section 3) |
+| MySQL | Windows service **MySQL80** (not Docker) | `localhost:3306`, DB `marketplace_dev` | Browse it with MySQL Workbench. Flyway creates and migrates the schema on backend start |
+| Keycloak | Compose service `keycloak` (container `marketplace-keycloak`) | `http://localhost:8080`, realm `marketplace-realm` | Imports `infrastructure/keycloak/marketplace-realm.json`; admin console `admin` / `admin_password`. Keeps its own data, no MySQL needed |
 | MinIO | Compose services `minio` + `minio-init` | API `localhost:9000`, console `localhost:9001` | `minio-init` creates the `marketplace-private` bucket |
 | Mailpit | Compose service `mailpit` | SMTP `localhost:1025`, inbox `http://localhost:8025` | Catches every email the backend sends |
 | Backend | `gradlew bootRun`, profile `dev` | `http://localhost:8081` | Needs JDK 21 |
 | Frontend | `npm start` | `http://localhost:4200` | Proxies `/api` to the backend |
 
-Prerequisites: Docker Desktop, JDK 21, Node.js 22 or 24 with npm, Git.
+Prerequisites: MySQL 8 (MySQL80 service) with MySQL Workbench, Docker Desktop, JDK 21, Node.js 22 or 24 with npm, Git.
 
-> **Never run a bare `docker compose up -d`.** The Compose file also defines MySQL and Keycloak, which clash with MySQL80 (port 3306) and `keycloak-clean` (port 8080). Start only the services listed here.
+> **Docker runs Keycloak, MinIO and Mailpit only, never MySQL.** Never run a bare `docker compose up -d`: the Compose file also defines a `mysql` service, which would start a second, unused database next to MySQL80. Start only the services named in section 2. If `marketplace-mysql` was started by mistake, `docker stop marketplace-mysql` stops it; the app is unaffected.
 
-**Alternative: everything from Compose.** If you don't use MySQL80/`keycloak-clean`, Compose can provide MySQL and Keycloak as well. Run `$env:MYSQL_HOST_PORT = '3307'; docker compose up -d` so Compose MySQL sits on 3307 next to MySQL80, and use `DB_URL=...localhost:3307...`, `DB_USERNAME=marketplace_user`, `DB_PASSWORD=marketplace_secret`. The Compose Keycloak imports `infrastructure/keycloak/marketplace-realm.json` (admin console login `admin` / `admin_password`). The automated end-to-end suite has been run successfully against this variant.
+### Connecting MySQL Workbench
+
+New connection → Hostname `127.0.0.1`, Port `3306`, Username `root`, password as `DB_PASSWORD` in `backend/env`, Default schema `marketplace_dev`. Read and query freely, but change the table structure only through the Flyway files in `backend/src/main/resources/db/migration`: the backend validates the schema on start and refuses to run if it was altered by hand.
 
 ---
 
-## 2. Start object storage and mail
+## 2. Start Keycloak, object storage and mail (Docker)
 
 ```powershell
 cd D:\Rentals\commercial-equipment-rentals\infrastructure
-docker compose up -d minio minio-init mailpit
+docker compose up -d keycloak minio minio-init mailpit
 docker compose ps
 ```
 
@@ -39,13 +41,13 @@ Check http://localhost:9001 (login `minioadmin` / `minioadminpassword`): the `ma
 
 ## 3. Keycloak (once)
 
-In http://localhost:8080/admin, realm `marketplace-realm`. The full click-path is in [the completion plan, Phase 0.2](../requirements/end-to-end-completion-plan.md); in short:
+In http://localhost:8080/admin (login `admin` / `admin_password`), realm `marketplace-realm`. On first start the Compose Keycloak imports `infrastructure/keycloak/marketplace-realm.json`, which already covers steps 1, 2, 3 and 5 below; **step 4 (the backend service account) is done by hand once**, and Keycloak keeps it across restarts. The full click-path is in [the completion plan, Phase 0.2](../requirements/end-to-end-completion-plan.md); in short:
 
 1. **Realm roles:** `ROLE_RENTER`, `ROLE_OWNER`, `ROLE_ADMIN`, `ROLE_SUPPORT` (exact, case-sensitive).
 2. **Default role for sign-ups:** `ROLE_RENTER`. Turn on *User registration*, *Login with email*, *Forgot password*.
 3. **Client `marketplace-frontend`:** public, standard flow on, **direct access grants on** (the automated tests sign in this way), redirect URIs and post-logout redirect URIs `http://localhost:4200/*`, web origin `http://localhost:4200`, PKCE `S256`.
 4. **Client `marketplace-backend`:** client authentication on, service accounts on; service-account roles `realm-management` → `manage-users` and `view-users`. Copy its secret into `KEYCLOAK_ADMIN_CLIENT_SECRET` (section 4). With it, approving an owner's KYC grants `ROLE_OWNER` automatically; without it, approval still works and the admin is told to assign the role by hand.
-5. **Users** (email verified, password not temporary): `renter@example.com` (`ROLE_RENTER`), `owner@example.com` (`ROLE_RENTER`; gets `ROLE_OWNER` on KYC approval), `admin@example.com` (`ROLE_ADMIN`). Every user needs an email, first and last name.
+5. **Users** (email verified, password not temporary): `renter@example.com` (`ROLE_RENTER`), `owner@example.com` (the realm import gives `ROLE_RENTER` and `ROLE_OWNER`, but the role alone does not make a working owner: the account can list equipment only once an owner application is approved. On a fresh database, sign in as this user, follow **Complete owner details**, then approve the application in **Owner KYC**), `admin@example.com` (`ROLE_ADMIN`). Every user needs an email, first and last name.
 
 ---
 
@@ -136,13 +138,15 @@ $auth = @{ Authorization = "Bearer $token" }
 
 | Shortcut | What it does |
 |---|---|
-| `POST /api/v1/dev/seed/owner-listing` | Makes the **caller** a verified owner (with a fake payout account) and creates one approved listing. Each call adds another listing. Also grants `ROLE_OWNER` in Keycloak if the service account is configured; sign in again afterwards. |
+| `POST /api/v1/dev/seed/owner-listing` | Makes the **caller** a verified owner (with a fake payout account) and creates one approved listing, a demolition hammer with a sample picture. Each call adds another listing. Also grants `ROLE_OWNER` in Keycloak if the service account is configured; sign in again afterwards. |
+| `POST /api/v1/dev/seed/listing-photos` | Gives every listing that has no photo a sample picture matching its title (breaker, compactor, vibrator, core cutter, generator) or category. The pictures are illustrations bundled in `backend/src/main/resources/dev/listing-photos/`. |
 | `POST /api/v1/dev/bookings/{id}/shift-time?hours=-73` | Time travel: moves the booking's start, end and hold times (and its inspections, history and settlement release) by the given hours. Use it to make a handover or return available now instead of waiting. |
 | `POST /api/v1/dev/scheduler/run` | Runs every background job once: expire holds, advance rentals, release settlements, close review windows. |
 | `POST /api/v1/dev/payments/{orderId}/simulate` | The fake Razorpay checkout (normally called by the payment dialog's **Pay successfully** / **Fail payment** buttons). |
 
 ```powershell
 Invoke-RestMethod -Method Post -Headers $auth -Uri 'http://localhost:8081/api/v1/dev/seed/owner-listing'
+Invoke-RestMethod -Method Post -Headers $auth -Uri 'http://localhost:8081/api/v1/dev/seed/listing-photos'
 Invoke-RestMethod -Method Post -Headers $auth -Uri 'http://localhost:8081/api/v1/dev/bookings/<bookingId>/shift-time?hours=-73'
 Invoke-RestMethod -Method Post -Headers $auth -Uri 'http://localhost:8081/api/v1/dev/scheduler/run'
 ```
@@ -208,7 +212,7 @@ The suite writes test data (users, listings, bookings) into whichever database t
 | Symptom | Fix |
 |---|---|
 | Backend fails with `Could not resolve placeholder 'X'` | An environment variable from section 4.1 is missing in the session that started the backend. |
-| `Access denied for user ...` | `DB_URL` points at a different MySQL than you think: MySQL80 is on 3306, Compose MySQL (if started) on its `MYSQL_HOST_PORT`. Match the credentials to that server. |
+| `Access denied for user ...` | `DB_URL` must point at MySQL80 (`localhost:3306/marketplace_dev`) with its `root` password. If you see data in Docker Desktop's `marketplace-mysql` (port 3307) instead, that container was started by mistake: `docker stop marketplace-mysql`. |
 | Signed in, but owner/admin pages say "You don't have access" | The token predates a role change. Sign out and in again. If roles never appear, check the realm roles are assigned and that their names start with `ROLE_`. |
 | KYC approval shows "could not be assigned automatically" | `KEYCLOAK_ADMIN_CLIENT_SECRET` is missing or wrong, or the service account lacks `manage-users`/`view-users`. Assign `ROLE_OWNER` by hand meanwhile. |
 | Photo or document upload fails in the browser | MinIO isn't running, the bucket is missing (`docker compose up -d minio-init`), or the frontend isn't on `http://localhost:4200` (CORS). |

@@ -20,6 +20,12 @@ import com.marketplace.booking.BookingService;
 import com.marketplace.booking.DeliveryOption;
 import com.marketplace.dev.DevToolsService;
 import com.marketplace.exception.ConflictException;
+import com.marketplace.owner.OwnerOnboardingRequest;
+import com.marketplace.owner.OwnerOnboardingService;
+import com.marketplace.storage.PrivateObjectStorage;
+import com.marketplace.user.MyProfileResponse;
+import com.marketplace.user.MyProfileService;
+import com.marketplace.user.MyProfileUpdateRequest;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -31,6 +37,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.Mockito.verify;
 
 @SpringBootTest(
         classes = com.marketplace.MarketplaceApplication.class,
@@ -91,8 +102,17 @@ class FlywayMigrationTests {
     @Autowired
     private DevToolsService devToolsService;
 
+    @Autowired
+    private OwnerOnboardingService ownerOnboardingService;
+
+    @Autowired
+    private MyProfileService myProfileService;
+
     @MockBean
     private JwtDecoder jwtDecoder;
+
+    @MockBean
+    private PrivateObjectStorage objectStorage;
 
     @Test
     void appliesAllMigrationsToAnEmptyMysqlDatabase() {
@@ -136,6 +156,23 @@ class FlywayMigrationTests {
                 WHERE op.id = ? AND e.status = 'ACTIVE' AND op.verification_status = 'VERIFIED'
                   AND op.razorpay_linked_account_id LIKE 'acc_FAKE%'
                 """, Integer.class, first.ownerProfileId())).isEqualTo(2);
+        assertThat(first.photoAttached()).isTrue();
+        // Consecutive seeds are different kinds of equipment, each in its own category.
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(DISTINCT e.category_id) FROM equipment e WHERE e.id IN (?, ?)
+                """, Integer.class, first.equipmentId(), second.equipmentId())).isEqualTo(2);
+        assertThat(first.title()).isNotEqualTo(second.title()).contains(" · DEV-");
+        verify(objectStorage).put(startsWith("equipment/" + first.equipmentId() + "/images/"), eq("image/jpeg"),
+                any(byte[].class));
+
+        // A listing that lost its photo gets a sample one back; listings that already have one are left alone.
+        jdbcTemplate.update("DELETE FROM equipment_images WHERE equipment_id = ?", first.equipmentId());
+        DevToolsService.SamplePhotosResponse backfill = devToolsService.addSamplePhotos();
+        assertThat(backfill.photosAttached()).isEqualTo(backfill.listingsWithoutPhotos()).isPositive();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM equipment_images
+                WHERE equipment_id IN (?, ?) AND is_primary = TRUE AND uploaded_at IS NOT NULL
+                """, Integer.class, first.equipmentId(), second.equipmentId())).isEqualTo(2);
 
         Instant start = Instant.now().plusSeconds(3 * 86_400L).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         Jwt renterJwt = Jwt.withTokenValue("seed-renter").header("alg", "none")
@@ -182,7 +219,7 @@ class FlywayMigrationTests {
                      latitude, longitude, status)
                 VALUES (?, ?, ?, 'Test listing', 'Test listing', 'Test', 'TEST-1',
                         1200.00, 5000.00, 1, FALSE, TRUE, 0.00, 'Test address',
-                        'Bengaluru', '560001', 12.9716, 77.5946, 'ACTIVE')
+                        'Hyderabad', '500001', 17.3850, 78.4867, 'ACTIVE')
                 """, equipmentId, ownerProfileId, categoryId);
 
         int requestCount = 10;
@@ -258,5 +295,57 @@ class FlywayMigrationTests {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void ownerApplicationWithAPhoneAlreadyInUseSaysSo() {
+        String phone = "+9190" + String.valueOf(System.nanoTime()).substring(0, 8);
+        ownerOnboardingService.submit(applicant(), ownerRequest(phone));
+
+        assertThatThrownBy(() -> ownerOnboardingService.submit(applicant(), ownerRequest(phone)))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("phone number is already registered");
+    }
+
+    @Test
+    void usersReadAndUpdateTheirOwnProfile() {
+        Jwt me = Jwt.withTokenValue("me").header("alg", "none")
+                .subject(UUID.randomUUID().toString())
+                .claim("email", "me-" + UUID.randomUUID() + "@example.com")
+                .claim("given_name", "Meera").claim("family_name", "Rao")
+                .claim("realm_access", java.util.Map.of("roles", List.of("ROLE_RENTER", "default-roles-marketplace-realm")))
+                .build();
+
+        MyProfileResponse created = myProfileService.get(me);
+        assertThat(created.firstName()).isEqualTo("Meera");
+        assertThat(created.roles()).containsExactly("ROLE_RENTER");
+        assertThat(created.signInNameUpdated()).isNull();
+
+        String phone = "+9191" + String.valueOf(System.nanoTime()).substring(0, 8);
+        MyProfileResponse updated = myProfileService.update(me, new MyProfileUpdateRequest(" Meera ", "Rao-Iyer", phone));
+        assertThat(updated.firstName()).isEqualTo("Meera");
+        assertThat(updated.lastName()).isEqualTo("Rao-Iyer");
+        assertThat(updated.phone()).isEqualTo(phone);
+        assertThat(updated.signInNameUpdated()).as("Keycloak admin is not configured in this test").isFalse();
+
+        assertThat(myProfileService.update(me, new MyProfileUpdateRequest("Meera", "Rao", "")).phone()).isNull();
+
+        Jwt other = applicant();
+        myProfileService.update(other, new MyProfileUpdateRequest("Other", "Person", phone));
+        assertThatThrownBy(() -> myProfileService.update(me, new MyProfileUpdateRequest("Meera", "Rao", phone)))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("phone number is already registered");
+    }
+
+    private static Jwt applicant() {
+        return Jwt.withTokenValue("applicant").header("alg", "none")
+                .subject(UUID.randomUUID().toString())
+                .claim("email", "applicant-" + UUID.randomUUID() + "@example.com")
+                .build();
+    }
+
+    private static OwnerOnboardingRequest ownerRequest(String phone) {
+        return new OwnerOnboardingRequest("INDIVIDUAL", "", "", "", "987654321098", "HDFC0001234",
+                "Asha Applicant", "Asha", "Applicant", phone);
     }
 }

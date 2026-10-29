@@ -3,6 +3,8 @@ package com.marketplace.equipment;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
 import com.marketplace.storage.PrivateObjectStorage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -15,6 +17,8 @@ import java.util.UUID;
 
 @Service
 public class EquipmentMediaService {
+
+    private static final Logger log = LoggerFactory.getLogger(EquipmentMediaService.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final PrivateObjectStorage objectStorage;
@@ -53,7 +57,7 @@ public class EquipmentMediaService {
 
     @Transactional
     public EquipmentImageResponse complete(String equipmentId, String imageId, Jwt jwt) {
-        lockEditableListing(equipmentId, jwt.getSubject());
+        String ownerUserId = lockEditableListing(equipmentId, jwt.getSubject());
         ImageRow image = findImage(equipmentId, imageId);
         if (image == null || image.uploadExpiresAt() == null || !image.uploadExpiresAt().isAfter(Instant.now())) {
             throw new ConflictException("The image upload is expired or has already been completed.");
@@ -77,6 +81,7 @@ public class EquipmentMediaService {
         if (updated != 1) {
             throw new ConflictException("The image upload has already been completed.");
         }
+        audit(ownerUserId, "EQUIPMENT_PHOTO_ADDED", equipmentId, imageId);
         return new EquipmentImageResponse(imageId, objectStorage.presignGet(image.objectKey(), false),
                 primary, displayOrder);
     }
@@ -117,19 +122,82 @@ public class EquipmentMediaService {
                 equipmentId);
     }
 
-    private void lockEditableListing(String equipmentId, String subject) {
+    /**
+     * Owners manage photos on drafts, pending and rejected listings, and on live ones without a new review (each change
+     * is audited). Suspended or archived listings are frozen. Returns the owner's user id, for the audit trail.
+     */
+    private String lockEditableListing(String equipmentId, String subject) {
         List<String> rows = jdbcTemplate.query("""
-                SELECT e.id FROM equipment e
+                SELECT u.id FROM equipment e
                 JOIN owner_profiles op ON op.id = e.owner_id
                 JOIN users u ON u.id = op.user_id
                 WHERE e.id = ? AND u.keycloak_subject_id = ?
                   AND op.verification_status = 'VERIFIED'
-                  AND e.status IN ('DRAFT', 'REJECTED')
+                  AND e.status IN ('DRAFT', 'PENDING_APPROVAL', 'ACTIVE', 'REJECTED')
                 FOR UPDATE
                 """, (rs, row) -> rs.getString(1), equipmentId, subject);
         if (rows.isEmpty()) {
             throw new ResourceNotFoundException("Editable equipment listing not found.");
         }
+        return rows.get(0);
+    }
+
+    /** Removes a photo. When it was the cover, the next photo in order becomes the cover. */
+    @Transactional
+    public List<EquipmentImageResponse> delete(String equipmentId, String imageId, Jwt jwt) {
+        String ownerUserId = lockEditableListing(equipmentId, jwt.getSubject());
+        UploadedImage image = findUploaded(equipmentId, imageId);
+        jdbcTemplate.update("DELETE FROM equipment_images WHERE id = ? AND equipment_id = ?", imageId, equipmentId);
+        if (image.primary()) {
+            List<String> next = jdbcTemplate.queryForList("""
+                    SELECT id FROM equipment_images
+                    WHERE equipment_id = ? AND uploaded_at IS NOT NULL
+                    ORDER BY display_order, id
+                    """, String.class, equipmentId);
+            if (!next.isEmpty()) {
+                jdbcTemplate.update("UPDATE equipment_images SET is_primary = TRUE WHERE id = ?", next.get(0));
+            }
+        }
+        audit(ownerUserId, "EQUIPMENT_PHOTO_DELETED", equipmentId, imageId);
+        // The file is removed after the row; a leftover object is harmless and private, so a storage error is not fatal.
+        try {
+            objectStorage.delete(image.objectKey());
+        } catch (RuntimeException exception) {
+            log.warn("Photo {} removed from listing {}, but its stored file was not deleted: {}",
+                    imageId, equipmentId, exception.getMessage());
+        }
+        return images(equipmentId);
+    }
+
+    /** Makes a photo the listing's cover, the one shown on catalogue cards. */
+    @Transactional
+    public List<EquipmentImageResponse> makePrimary(String equipmentId, String imageId, Jwt jwt) {
+        String ownerUserId = lockEditableListing(equipmentId, jwt.getSubject());
+        findUploaded(equipmentId, imageId);
+        jdbcTemplate.update("UPDATE equipment_images SET is_primary = (id = ?) WHERE equipment_id = ?", imageId, equipmentId);
+        audit(ownerUserId, "EQUIPMENT_PHOTO_COVER_SET", equipmentId, imageId);
+        return images(equipmentId);
+    }
+
+    private UploadedImage findUploaded(String equipmentId, String imageId) {
+        return jdbcTemplate.query("""
+                        SELECT storage_object_key, is_primary FROM equipment_images
+                        WHERE id = ? AND equipment_id = ? AND uploaded_at IS NOT NULL
+                        """,
+                        (rs, row) -> new UploadedImage(rs.getString("storage_object_key"), rs.getBoolean("is_primary")),
+                        imageId, equipmentId)
+                .stream().findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Photo not found on this listing."));
+    }
+
+    private void audit(String actorUserId, String action, String equipmentId, String imageId) {
+        jdbcTemplate.update("""
+                INSERT INTO audit_logs (id, actor_user_id, action, entity_name, entity_id, details_json)
+                VALUES (?, ?, ?, 'equipment', ?, ?)
+                """, UUID.randomUUID().toString(), actorUserId, action, equipmentId, "{\"imageId\":\"" + imageId + "\"}");
+    }
+
+    private record UploadedImage(String objectKey, boolean primary) {
     }
 
     private void requireOwnedListing(String equipmentId, String subject) {

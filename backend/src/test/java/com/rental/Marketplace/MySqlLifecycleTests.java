@@ -118,6 +118,7 @@ class MySqlLifecycleTests {
     private Jwt owner;
     private Jwt renter;
     private String equipmentId;
+    private String equipmentTitle;
 
     @BeforeEach
     void setUp() {
@@ -129,7 +130,9 @@ class MySqlLifecycleTests {
 
         owner = user("Omar", "Owner");
         renter = user("Eva", "Renter");
-        equipmentId = devTools.seedOwnerListing(owner).equipmentId();
+        DevToolsService.SeedResponse seeded = devTools.seedOwnerListing(owner);
+        equipmentId = seeded.equipmentId();
+        equipmentTitle = seeded.title();
     }
 
     @Test
@@ -140,7 +143,7 @@ class MySqlLifecycleTests {
                 owner, List.of(BookingStatus.CONFIRMED, BookingStatus.HANDOVER_PENDING), 0, 20);
         assertThat(upcoming.content()).extracting(OwnerBookingSummary::bookingId).containsExactly(bookingId);
         assertThat(upcoming.content().get(0).renterName()).isEqualTo("Eva Renter");
-        assertThat(bookingService.listForRenter(renter, 0, 20).content().get(0).equipmentTitle()).startsWith("Dev seed");
+        assertThat(bookingService.listForRenter(renter, 0, 20).content().get(0).equipmentTitle()).isEqualTo(equipmentTitle);
 
         runToReturned(bookingId);
         BookingDetailsResponse returned = bookingDetailsService.get(bookingId, owner, List.of());
@@ -226,7 +229,8 @@ class MySqlLifecycleTests {
         assertThat(status(bookingId)).isEqualTo("INSPECTION_PASSED");
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT amount FROM refunds WHERE booking_id = ? AND refund_type = 'DISPUTE_BALANCE'
-                """, BigDecimal.class, bookingId)).isEqualByComparingTo("1600.00");
+                """, BigDecimal.class, bookingId)).isEqualByComparingTo(jdbcTemplate.queryForObject(
+                "SELECT security_deposit_amount - 400 FROM bookings WHERE id = ?", BigDecimal.class, bookingId));
         assertThat(bookingDetailsService.get(bookingId, admin, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
                 .viewerRole()).isEqualTo("ADMIN");
     }

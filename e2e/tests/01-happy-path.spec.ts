@@ -59,11 +59,11 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await ownerPage.getByLabel('Refundable deposit (₹)').fill('3000');
   await ownerPage.getByPlaceholder('Name').first().fill('Plate size');
   await ownerPage.getByPlaceholder('Value').first().fill('50 x 58 cm');
-  await ownerPage.getByLabel('Address', { exact: true }).fill('Plot 7, Peenya Industrial Area');
-  await ownerPage.getByLabel('City', { exact: true }).fill('Bengaluru');
-  await ownerPage.getByLabel('Postal code').fill('560058');
-  await ownerPage.getByLabel('Latitude').fill('13.0285');
-  await ownerPage.getByLabel('Longitude').fill('77.5197');
+  await ownerPage.getByLabel('Address', { exact: true }).fill('Plot 7, IDA Jeedimetla');
+  await ownerPage.getByLabel('City', { exact: true }).fill('Hyderabad');
+  await ownerPage.getByLabel('Postal code').fill('500055');
+  await ownerPage.getByLabel('Latitude').fill('17.5110');
+  await ownerPage.getByLabel('Longitude').fill('78.4580');
   await ownerPage.getByRole('button', { name: 'Save draft' }).click();
   await expect(ownerPage.getByText('Draft saved')).toBeVisible();
   await ownerPage.locator('section', { hasText: title }).getByRole('button', { name: 'Submit for approval' }).click();
@@ -80,7 +80,7 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
     .find(candidate => candidate.title === title)!;
   const renterPage = await signedInPage(browser, users.renter.email, `/equipment/${listing.id}`);
   await expect(renterPage.getByText('Plate size')).toBeVisible();
-  await renterPage.getByRole('link', { name: 'Request booking' }).click();
+  await renterPage.getByRole('link', { name: 'Add to booking', exact: true }).click();
   const start = new Date(Date.now() + 3 * 86_400_000);
   start.setMinutes(0, 0, 0);
   await renterPage.getByLabel('Start').fill(localDateTime(start));

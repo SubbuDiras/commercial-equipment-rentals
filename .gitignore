@@ -27,3 +27,6 @@ backend/backend/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Local backend environment values (loaded by the dev profile)
+backend/env

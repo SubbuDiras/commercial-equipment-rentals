@@ -9,6 +9,11 @@ export const routes: Routes = [
     title: 'EquipRent India | Commercial Equipment Rental Marketplace'
   },
   {
+    path: 'equipment/category/:categoryId',
+    loadComponent: () => import('./features/catalogue/equipment-category.component').then(m => m.EquipmentCategoryComponent),
+    title: 'Equipment by Category'
+  },
+  {
     path: 'equipment/:equipmentId/book',
     canActivate: [authGuard],
     data: { role: 'ROLE_RENTER' },
@@ -38,6 +43,12 @@ export const routes: Routes = [
     data: { roles: ['ROLE_RENTER', 'ROLE_OWNER', 'ROLE_ADMIN'] },
     loadComponent: () => import('./features/bookings/booking-details.component').then(m => m.BookingDetailsComponent),
     title: 'Booking'
+  },
+  {
+    path: 'profile',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/profile/profile.component').then(m => m.ProfileComponent),
+    title: 'My Profile'
   },
   {
     path: 'owner/onboarding',

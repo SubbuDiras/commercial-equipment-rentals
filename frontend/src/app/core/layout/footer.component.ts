@@ -7,7 +7,7 @@ import { RouterLink } from '@angular/router';
   imports: [RouterLink],
   template: `
     <footer style="background-color: #0f172a; color: #94a3b8; padding-top: 4rem; padding-bottom: 3rem; margin-top: 6rem; border-top: 1px solid #1e293b;">
-      <div class="container">
+      <div class="container-wide">
         <div class="grid grid-cols-4" style="margin-bottom: 3rem;">
 
           <div>
@@ -19,7 +19,7 @@ import { RouterLink } from '@angular/router';
             </p>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
               <span class="badge badge-verified">Pilot Active</span>
-              <span style="font-size: 0.8125rem; color: #cbd5e1;">Bengaluru Corridor</span>
+              <span style="font-size: 0.8125rem; color: #cbd5e1;">Across India</span>
             </div>
           </div>
 

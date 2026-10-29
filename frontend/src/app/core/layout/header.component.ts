@@ -34,7 +34,7 @@ const ROLE_LABELS: Record<string, string> = {
   `],
   template: `
     <header class="glass-panel" style="position: sticky; top: 0; z-index: 50; border-bottom: 1px solid var(--color-border);">
-      <div class="container" style="display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; height: 4.5rem;">
+      <div class="container-wide" style="display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; height: 4.5rem;">
 
         <!-- Brand Logo -->
         <a routerLink="/equipment" style="display: flex; align-items: center; gap: 0.75rem; text-decoration: none; flex-shrink: 0;">
@@ -67,14 +67,14 @@ const ROLE_LABELS: Record<string, string> = {
         <!-- Right User Actions -->
         <div style="display: flex; align-items: center; gap: 1rem; flex-shrink: 0;">
           <ng-container *ngIf="auth.isAuthenticated(); else loginBtn">
-            <div style="text-align: right; white-space: nowrap;">
-              <div style="font-size: 0.875rem; font-weight: 600; line-height: 1.3;">{{ auth.currentUser()?.name }}</div>
+            <a routerLink="/profile" title="My profile" aria-label="My profile" style="text-align: right; white-space: nowrap; color: inherit; text-decoration: none;">
+              <div style="font-size: 0.875rem; font-weight: 600; line-height: 1.3;">{{ auth.currentUser()?.name }} <span aria-hidden="true" style="color: var(--color-text-muted);">›</span></div>
               <div style="display: flex; gap: 0.25rem; justify-content: flex-end; margin-top: 0.125rem;">
                 <span *ngIf="primaryRole() as role" class="badge badge-role">
                   {{ roleLabel(role) }}
                 </span>
               </div>
-            </div>
+            </a>
             <button (click)="auth.logout()" class="btn btn-secondary" style="padding: 0.5rem 0.875rem; font-size: 0.8125rem; white-space: nowrap;">
               Sign Out
             </button>

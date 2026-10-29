@@ -69,6 +69,39 @@ public class KeycloakAdminClient {
         }
     }
 
+    /**
+     * Sets a Keycloak user's first and last name, so the name in new tokens matches the marketplace profile.
+     * Reads the full user first and writes it back, because a partial update can drop other user-profile attributes.
+     *
+     * @throws KeycloakAdminException if the client is not configured or Keycloak rejects any call
+     */
+    public void updateUserName(String userId, String firstName, String lastName) {
+        if (!isConfigured()) {
+            throw new KeycloakAdminException("Keycloak admin client is not configured.");
+        }
+        try {
+            String token = serviceAccountToken();
+            String userPath = "/admin/realms/{realm}/users/{userId}";
+            JsonNode user = restClient.get().uri(userPath, properties.realm(), userId)
+                    .headers(headers -> headers.setBearerAuth(token))
+                    .retrieve().body(JsonNode.class);
+            if (user == null || !user.isObject()) {
+                throw new KeycloakAdminException("Keycloak user " + userId + " was not found.");
+            }
+            ((com.fasterxml.jackson.databind.node.ObjectNode) user).put("firstName", firstName).put("lastName", lastName);
+            restClient.put().uri(userPath, properties.realm(), userId)
+                    .headers(headers -> headers.setBearerAuth(token))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(user)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (KeycloakAdminException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new KeycloakAdminException("Keycloak name update failed: " + exception.getMessage(), exception);
+        }
+    }
+
     private String serviceAccountToken() {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "client_credentials");

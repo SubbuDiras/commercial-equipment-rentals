@@ -1,11 +1,12 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ConfirmDialogComponent } from '../../shared/confirm-dialog.component';
 import { InrPipe } from '../../shared/inr.pipe';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
 import { BookingApiService, OwnerBookingSummary } from '../bookings/booking-api.service';
 import { CancelDialogComponent } from '../bookings/cancel-dialog.component';
+import { OwnerSetupNoticeComponent } from './owner-setup-notice.component';
 
 const TABS = [
   { key: 'requests', label: 'Requests', statuses: ['REQUESTED'] },
@@ -23,11 +24,14 @@ const PAGE_SIZE = 20;
 @Component({
   selector: 'app-owner-bookings',
   standalone: true,
-  imports: [DatePipe, RouterLink, ConfirmDialogComponent, InrPipe, StatusBadgeComponent, CancelDialogComponent],
+  imports: [DatePipe, RouterLink, ConfirmDialogComponent, InrPipe, StatusBadgeComponent, CancelDialogComponent, OwnerSetupNoticeComponent],
   template: `
     <main class="container" style="max-width: 1100px; padding: 3rem 1rem;">
       <h1>Bookings for my equipment</h1>
       <p class="muted">Accept or decline new requests within 4 hours. Open a booking to handle handover, return and payouts.</p>
+
+      <app-owner-setup-notice (verified)="onOwnerChecked($event)" />
+      @if (ownerVerified()) {
 
       <div class="tabs" role="tablist">
         @for (tab of tabs; track tab.key) {
@@ -96,10 +100,11 @@ const PAGE_SIZE = 20;
         <app-cancel-dialog [bookingId]="booking.bookingId" [asOwner]="true"
                            (done)="cancelled()" (closed)="cancelling.set(null)" />
       }
+      }
     </main>
   `
 })
-export class OwnerBookingsComponent implements OnInit {
+export class OwnerBookingsComponent {
   private readonly api = inject(BookingApiService);
 
   readonly tabs = TABS;
@@ -114,8 +119,17 @@ export class OwnerBookingsComponent implements OnInit {
   readonly rejecting = signal<OwnerBookingSummary | null>(null);
   readonly cancelling = signal<OwnerBookingSummary | null>(null);
 
-  ngOnInit(): void {
-    this.load();
+  /** Null until the owner check finishes; bookings show only for a verified owner. */
+  readonly ownerVerified = signal<boolean | null>(null);
+
+  /** Called by the owner check instead of loading on init, so an unverified owner sees what to do instead. */
+  onOwnerChecked(verified: boolean): void {
+    this.ownerVerified.set(verified);
+    if (verified) {
+      this.load();
+    } else {
+      this.loading.set(false);
+    }
   }
 
   select(tab: string): void {

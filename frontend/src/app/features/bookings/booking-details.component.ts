@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
 import { ConfirmDialogComponent } from '../../shared/confirm-dialog.component';
+import { invalidFieldsMessage } from '../../shared/form-feedback';
 import { InrPipe } from '../../shared/inr.pipe';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
 import { BookingAction, BookingApiService, BookingDetails, InspectionType } from './booking-api.service';
@@ -91,15 +92,17 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
                   </select>
                 </label>
                 <label>Claim amount (₹)
-                  <input type="number" min="0" step="0.01" [max]="b.pricing.securityDepositAmount" formControlName="claimAmount" class="form-control" />
+                  <input type="number" min="0" step="0.01" formControlName="claimAmount" class="form-control" />
                 </label>
               </div>
               <label>What happened
                 <textarea rows="4" maxlength="2000" formControlName="description" class="form-control"></textarea>
               </label>
+              @if (disputeFormError()) {
+                <div class="alert alert-error" role="alert">{{ disputeFormError() }}</div>
+              }
               <div style="display: flex; gap: .5rem;">
-                <button type="submit" class="btn btn-danger"
-                        [disabled]="disputeForm.invalid || busy() || (disputeForm.controls.claimAmount.value ?? 0) > b.pricing.securityDepositAmount">Submit claim</button>
+                <button type="submit" class="btn btn-danger" [disabled]="busy()">Submit claim</button>
                 <button type="button" class="btn btn-secondary" (click)="showDisputeForm.set(false)">Cancel</button>
               </div>
             </form>
@@ -122,7 +125,10 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
               <label>Comments (optional)
                 <textarea rows="3" maxlength="2000" formControlName="comments" class="form-control"></textarea>
               </label>
-              <button type="submit" class="btn btn-primary" [disabled]="reviewForm.invalid || busy()" style="justify-self: start;">Submit review</button>
+              @if (reviewFormError()) {
+                <div class="alert alert-error" role="alert">{{ reviewFormError() }}</div>
+              }
+              <button type="submit" class="btn btn-primary" [disabled]="busy()" style="justify-self: start;">Submit review</button>
             </form>
           </section>
         }
@@ -275,6 +281,9 @@ export class BookingDetailsComponent implements OnInit {
   readonly notice = signal<string | null>(null);
   readonly dialog = signal<BookingAction | null>(null);
   readonly showDisputeForm = signal(false);
+  /** Shown beside the claim and review forms when submitted incomplete, rather than disabling their buttons. */
+  readonly disputeFormError = signal<string | null>(null);
+  readonly reviewFormError = signal<string | null>(null);
 
   readonly disputeForm = this.formBuilder.nonNullable.group({
     category: ['DAMAGE', Validators.required],
@@ -353,7 +362,16 @@ export class BookingDetailsComponent implements OnInit {
   }
 
   raiseDispute(): void {
+    const invalid = invalidFieldsMessage(this.disputeForm,
+      { category: 'Category', claimAmount: 'Claim amount (₹)', description: 'What happened' });
+    const deposit = this.booking()?.pricing.securityDepositAmount ?? 0;
     const value = this.disputeForm.getRawValue();
+    this.disputeFormError.set(invalid ?? ((value.claimAmount ?? 0) > deposit
+      ? `The claim cannot be more than the deposit (₹${deposit.toLocaleString('en-IN')}).`
+      : null));
+    if (this.disputeFormError()) {
+      return;
+    }
     this.act(this.api.raiseDispute(this.bookingId(), {
       category: value.category,
       claimAmount: value.claimAmount ?? 0,
@@ -365,6 +383,10 @@ export class BookingDetailsComponent implements OnInit {
   }
 
   submitReview(): void {
+    this.reviewFormError.set(this.reviewForm.controls.rating.invalid ? 'Choose a star rating from 1 to 5.' : null);
+    if (this.reviewFormError()) {
+      return;
+    }
     const value = this.reviewForm.getRawValue();
     this.act(this.api.review(this.bookingId(), value.rating ?? 0, value.comments.trim() || null),
       'Thank you for your review.', () => this.reviewForm.reset());
