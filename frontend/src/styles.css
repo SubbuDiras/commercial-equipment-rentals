@@ -192,6 +192,13 @@ textarea.ng-invalid.ng-touched {
   outline-color: var(--color-danger);
 }
 
+/* The * after a required field's label */
+.required-mark {
+  color: var(--color-danger);
+  font-weight: 700;
+  margin-left: .15rem;
+}
+
 /* Full-width pages (catalogue, header, footer): edge to edge with a small gutter */
 .container-wide {
   width: 100%;

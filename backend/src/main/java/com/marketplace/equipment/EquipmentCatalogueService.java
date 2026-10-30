@@ -189,28 +189,57 @@ public class EquipmentCatalogueService {
         return new EquipmentListingPage(withPrimaryImages(content), page, size, totalElements, totalPages);
     }
 
-    /** Adds each listing's cover photo (the primary image, else the first uploaded one) with one query per page. */
+    /**
+     * Adds each listing's cover photo (the primary image, else the first uploaded one) with one query per page. The
+     * link is the stable {@link #coverPhotoUrl} address, not a storage link: storage links expire after 15 minutes,
+     * and the catalogue loads card photos lazily, so a page left open would show broken photos as you scroll. The
+     * image id in the link changes when the cover does, so browsers never keep showing an old cover.
+     */
     private List<EquipmentListingResponse> withPrimaryImages(List<EquipmentListingResponse> listings) {
         if (listings.isEmpty()) {
             return listings;
         }
         String placeholders = listings.stream().map(ignored -> "?").collect(Collectors.joining(", "));
-        Map<String, String> objectKeys = new LinkedHashMap<>();
+        Map<String, String> coverImageIds = new LinkedHashMap<>();
         jdbcTemplate.query("""
-                        SELECT equipment_id, storage_object_key
+                        SELECT equipment_id, id
                         FROM equipment_images
                         WHERE equipment_id IN (%s) AND uploaded_at IS NOT NULL
                         ORDER BY is_primary DESC, display_order, id
                         """.formatted(placeholders),
-                (RowCallbackHandler) resultSet -> objectKeys.putIfAbsent(
-                        resultSet.getString("equipment_id"), resultSet.getString("storage_object_key")),
+                (RowCallbackHandler) resultSet -> coverImageIds.putIfAbsent(
+                        resultSet.getString("equipment_id"), resultSet.getString("id")),
                 listings.stream().map(EquipmentListingResponse::id).toArray());
         return listings.stream()
                 .map(listing -> {
-                    String key = objectKeys.get(listing.id());
-                    return key == null ? listing : listing.withPrimaryImageUrl(objectStorage.presignGet(key, false));
+                    String imageId = coverImageIds.get(listing.id());
+                    return imageId == null ? listing : listing.withPrimaryImageUrl(
+                            "/api/v1/equipment/" + listing.id() + "/cover?v=" + imageId);
                 })
                 .toList();
+    }
+
+    /**
+     * A fresh storage link to a live listing's cover photo, for the catalogue's stable cover address. Drafts and
+     * listings of unverified owners are not public, so their photos are not either.
+     */
+    @Transactional(readOnly = true)
+    public String coverPhotoUrl(String equipmentId) {
+        List<String> keys = jdbcTemplate.queryForList("""
+                        SELECT i.storage_object_key
+                        FROM equipment_images i
+                        JOIN equipment e ON e.id = i.equipment_id
+                        JOIN owner_profiles op ON op.id = e.owner_id
+                        WHERE i.equipment_id = ? AND i.uploaded_at IS NOT NULL
+                          AND e.status = 'ACTIVE' AND op.verification_status = 'VERIFIED'
+                        ORDER BY i.is_primary DESC, i.display_order, i.id
+                        LIMIT 1
+                        """,
+                String.class, equipmentId);
+        if (keys.isEmpty()) {
+            throw new ResourceNotFoundException("This listing has no public photo.");
+        }
+        return objectStorage.presignGet(keys.get(0), false);
     }
 
     @Transactional(readOnly = true)

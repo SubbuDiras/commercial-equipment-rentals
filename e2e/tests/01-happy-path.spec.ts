@@ -22,7 +22,7 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await ownerPage.getByLabel('First name').fill(owner.firstName);
   await ownerPage.getByLabel('Last name').fill(owner.lastName);
   await ownerPage.getByLabel('Mobile number').fill(`98${Date.now().toString().slice(-8)}`);
-  await ownerPage.getByLabel('PAN', { exact: true }).fill('ABCDE1234F');
+  await ownerPage.getByRole('textbox', { name: 'PAN', exact: true }).fill('ABCDE1234F');
   await ownerPage.getByLabel('Aadhaar number').fill('2341 2341 2346');
   await ownerPage.getByLabel('Account holder name').fill(`${owner.firstName} ${owner.lastName}`);
   await ownerPage.getByLabel('Bank name').fill('HDFC Bank');
@@ -32,13 +32,14 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await ownerPage.getByLabel('IFSC code').fill('HDFC0001234');
   // Missing documents are named; the files are chosen in the form and upload with it.
   await ownerPage.getByRole('button', { name: 'Submit for verification' }).click();
-  await expect(ownerPage.getByText('Choose a file for: Aadhaar card, PAN card, Signature.')).toBeVisible();
+  await expect(ownerPage.getByText('Choose a file for: Aadhaar card, PAN card, Signature, Bank proof.')).toBeVisible();
   await ownerPage.getByLabel('Choose Aadhaar card file').setInputFiles({ name: 'aadhaar.pdf', mimeType: 'application/pdf', buffer: tinyPdf });
   await ownerPage.getByLabel('Choose PAN card file').setInputFiles({ name: 'pan.png', mimeType: 'image/png', buffer: tinyPng });
   await ownerPage.getByLabel('Choose Signature file').setInputFiles({ name: 'signature.png', mimeType: 'image/png', buffer: tinyPng });
+  await ownerPage.getByLabel('Choose Bank proof file').setInputFiles({ name: 'cheque.pdf', mimeType: 'application/pdf', buffer: tinyPdf });
   await ownerPage.getByRole('button', { name: 'Submit for verification' }).click();
   await expect(ownerPage.getByText('Under review').first()).toBeVisible();
-  for (const name of ['aadhaar.pdf', 'pan.png', 'signature.png']) {
+  for (const name of ['aadhaar.pdf', 'pan.png', 'signature.png', 'cheque.pdf']) {
     await expect(ownerPage.getByText(name)).toBeVisible();
   }
   // Only the last 4 Aadhaar digits come back; the account number is masked for the owner.
@@ -50,6 +51,12 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   // 2. Admin approves the KYC and sets a fake payout account.
   const adminPage = await signedInPage(browser, users.admin.email, '/admin/owners');
   const application = adminPage.locator('article', { hasText: owner.email });
+  // The admin sees the documents themselves: photos as images, PDFs in a viewer.
+  await application.getByRole('button', { name: 'View documents' }).click();
+  const panPhoto = application.getByRole('img', { name: 'PAN card: pan.png' });
+  await expect.poll(() => panPhoto.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  await expect(application.getByRole('figure', { name: 'Aadhaar card' }).locator('object[type="application/pdf"]')).toBeAttached();
+  await expect(application.getByRole('button', { name: 'Download' })).toHaveCount(0);
   await application.getByRole('button', { name: 'Approve' }).click();
   await dialog(adminPage).getByRole('button', { name: 'Approve' }).click();
   const notice = adminPage.locator('.alert[role=status]');

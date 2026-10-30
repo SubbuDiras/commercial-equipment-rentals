@@ -106,7 +106,7 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
 }
 ```
 - **Response `201 Created`:** Created `OwnerProfileResponse` with status `UNDER_REVIEW`.
-- **Validation:** `aadhaarNumber` is required: 12 digits, not starting with 0 or 1, passing the Verhoeff checksum (`400` otherwise). Only its last 4 digits are stored; the full number is never persisted or logged. `bankName` is required (max 100); `bankAccountType` is `SAVINGS` or `CURRENT`. `pan` is required and must look like ABCDE1234F (5 letters, 4 digits, 1 letter); `bankAccountNumber` must be exactly 10 digits; `phone` must be a 10-digit Indian mobile number with the country code (`+91` then 6–9 and 9 more digits).
+- **Validation:** `aadhaarNumber` is required: any 12 digits (`400` otherwise). Only its last 4 digits are stored; the full number is never persisted or logged. `bankName` is required (max 100); `bankAccountType` is `SAVINGS` or `CURRENT`. `pan` is required and must look like ABCDE1234F (5 letters, 4 digits, 1 letter); `bankAccountNumber` must be exactly 10 digits; `phone` must be a 10-digit Indian mobile number with the country code (`+91` then 6–9 and 9 more digits).
 
 The account's `sub` and `email` are taken from the verified Keycloak JWT. Contact name and phone are required in the request because they are not guaranteed to be present in every token. Repeated onboarding for an account with an owner profile returns `409 Conflict`.
 

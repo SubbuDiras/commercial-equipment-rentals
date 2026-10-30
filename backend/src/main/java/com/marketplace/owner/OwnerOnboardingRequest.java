@@ -34,9 +34,9 @@ public record OwnerOnboardingRequest(
         @NotBlank
         @Pattern(regexp = "\\+91[6-9][0-9]{9}", message = "must be a 10-digit Indian mobile number, e.g. +919876543210")
         String phone,
-        /** Checked in full (format and checksum), stored as the last 4 digits only. */
+        /** Any 12 digits; stored as the last 4 digits only. */
         @NotBlank
-        @Pattern(regexp = "[2-9][0-9]{11}")
+        @Pattern(regexp = "[0-9]{12}", message = "must be 12 digits")
         String aadhaarNumber,
         @NotBlank
         @Size(max = 100)

@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { ConfirmDialogComponent } from '../../shared/confirm-dialog.component';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
 import { documentTypeLabel, OwnerApiService, OwnerDocument, OwnerReview } from '../owner/owner-api.service';
@@ -74,17 +75,39 @@ const TABS = [
             @if (list.length === 0) {
               <p class="muted" style="margin-top: .75rem;">No documents uploaded.</p>
             }
-            <ul style="margin-top: .75rem; padding-left: 1.25rem;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; margin-top: .75rem;">
               @for (document of list; track document.documentId) {
-                <li style="margin: .35rem 0;">
-                  {{ typeLabel(document.documentType) }} · {{ document.originalFilename }} · {{ document.status }}
-                  @if (document.uploadedAt) {
-                    <button type="button" class="btn btn-secondary" style="padding: .2rem .6rem; margin-left: .5rem;"
-                            (click)="download(owner.ownerProfileId, document)">Download</button>
-                  }
-                </li>
+                @let preview = previews()[document.documentId];
+                <figure [attr.aria-label]="typeLabel(document.documentType)"
+                        style="margin: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-bg-surface);">
+                  <div style="height: 220px; display: grid; place-items: center; background: #f1f5f9;">
+                    @if (!document.uploadedAt) {
+                      <span class="muted" style="font-size: .875rem;">Upload not finished</span>
+                    } @else if (!preview) {
+                      <span class="muted" style="font-size: .875rem;">Loading…</span>
+                    } @else if (document.contentType === 'application/pdf') {
+                      <object [data]="preview.safe" type="application/pdf" [attr.aria-label]="document.originalFilename"
+                              style="width: 100%; height: 100%;">
+                        <a [href]="preview.url" target="_blank" rel="noopener">Open PDF</a>
+                      </object>
+                    } @else {
+                      <a [href]="preview.url" target="_blank" rel="noopener" style="display: block; width: 100%; height: 100%;"
+                         [attr.aria-label]="'Open ' + typeLabel(document.documentType) + ' full size'">
+                        <img [src]="preview.url" [alt]="typeLabel(document.documentType) + ': ' + document.originalFilename"
+                             style="width: 100%; height: 100%; object-fit: contain;" />
+                      </a>
+                    }
+                  </div>
+                  <figcaption style="padding: .6rem .75rem; font-size: .875rem;">
+                    <strong>{{ typeLabel(document.documentType) }}</strong>
+                    <div class="muted" style="overflow-wrap: anywhere;">{{ document.originalFilename }} · {{ document.status }}</div>
+                    @if (preview) {
+                      <a [href]="preview.url" target="_blank" rel="noopener" style="font-size: .8125rem;">Open full size</a>
+                    }
+                  </figcaption>
+                </figure>
               }
-            </ul>
+            </div>
           }
 
           @if (owner.status === 'UNDER_REVIEW') {
@@ -137,6 +160,9 @@ export class OwnerReviewComponent implements OnInit {
   readonly notice = signal<string | null>(null);
   readonly noticeIsWarning = signal(false);
   readonly pending = signal<{ owner: OwnerReview; action: 'approve' | 'reject' } | null>(null);
+  private readonly sanitizer = inject(DomSanitizer);
+  /** Viewable links for the documents on screen, by document id. */
+  readonly previews = signal<Record<string, { url: string; safe: SafeResourceUrl }>>({});
   accountIds: Record<string, string> = {};
 
   ngOnInit(): void {
@@ -158,14 +184,22 @@ export class OwnerReviewComponent implements OnInit {
       return;
     }
     this.api.adminDocuments(ownerProfileId).subscribe({
-      next: list => this.documents.update(current => ({ ...current, [ownerProfileId]: list })),
+      next: list => {
+        this.documents.update(current => ({ ...current, [ownerProfileId]: list }));
+        list.filter(document => document.uploadedAt).forEach(document => this.loadPreview(ownerProfileId, document));
+      },
       error: (failure: Error) => this.error.set(failure.message)
     });
   }
 
-  download(ownerProfileId: string, document: OwnerDocument): void {
-    this.api.adminDocumentDownload(ownerProfileId, document.documentId).subscribe({
-      next: ({ downloadUrl }) => window.open(downloadUrl, '_blank', 'noopener'),
+  /** A short-lived link that shows the file in the page; every view is recorded in the audit log. */
+  private loadPreview(ownerProfileId: string, document: OwnerDocument): void {
+    this.api.adminDocumentDownload(ownerProfileId, document.documentId, true).subscribe({
+      next: ({ downloadUrl }) => this.previews.update(current => ({
+        ...current,
+        // The PDF viewer needs a trusted resource URL; the link is our own storage's signed address.
+        [document.documentId]: { url: downloadUrl, safe: this.sanitizer.bypassSecurityTrustResourceUrl(downloadUrl) }
+      })),
       error: (failure: Error) => this.error.set(failure.message)
     });
   }

@@ -43,7 +43,7 @@ const PAYOUT_FIELDS: FieldSpec[] = [
     numeric: true, digitsOnly: true },
   { name: 'confirmBankAccountNumber', label: 'Confirm account number', hint: 'Type the account number again.', maxLength: 10,
     numeric: true, digitsOnly: true },
-  { name: 'bankIfsc', label: 'IFSC code', hint: '4 letters, a zero, then 6 letters or digits.', example: 'HDFC0001234', maxLength: 11, uppercase: true }
+  { name: 'bankIfsc', label: 'IFSC code', hint: '11 characters: bank code (4 letters), 0, branch code. SBI: SBIN0001234.', example: 'SBIN0001234', maxLength: 11, uppercase: true }
 ];
 
 const ACCOUNT_TYPES: Record<string, string> = { SAVINGS: 'Savings', CURRENT: 'Current' };
@@ -60,7 +60,7 @@ const KEY_DOCUMENTS = [
     accept: ANY_FORMAT_ACCEPT, contentTypes: ANY_CONTENT_TYPE },
   { type: 'SIGNATURE', label: 'Signature', required: true, hint: 'Sign on plain white paper and take a photo', formats: 'JPG or PNG',
     accept: '.jpg,.jpeg,.png,image/jpeg,image/png', contentTypes: ['image/jpeg', 'image/png'] },
-  { type: 'BANK_PROOF', label: 'Bank proof', required: false, hint: 'Cancelled cheque or passbook first page', formats: 'JPG, PNG or PDF',
+  { type: 'BANK_PROOF', label: 'Bank proof', required: true, hint: 'Cancelled cheque or passbook first page', formats: 'JPG, PNG or PDF',
     accept: ANY_FORMAT_ACCEPT, contentTypes: ANY_CONTENT_TYPE }
 ];
 
@@ -92,12 +92,39 @@ function matchesAccountNumber(control: AbstractControl<string>): ValidationError
     ? null : { mismatch: true };
 }
 
+/** For fields people often get slightly wrong, says exactly what is off in what they typed. */
+function formatProblem(name: FieldName, value: string): string | null {
+  const typed = value.replace(/\s/g, '').toUpperCase();
+  switch (name) {
+    case 'aadhaarNumber':
+      return /\D/.test(typed)
+        ? 'Use digits only: an Aadhaar number is 12 digits.'
+        : `An Aadhaar number is 12 digits; you entered ${typed.length}.`;
+    case 'gstin':
+      return typed.length !== 15
+        ? `A GSTIN is 15 characters; you entered ${typed.length}. Leave it blank if you have none.`
+        : 'A GSTIN has only letters and digits, e.g. 29ABCDE1234F1Z5.';
+    case 'bankIfsc':
+      if (typed.length !== 11) {
+        return `An IFSC is 11 characters; you entered ${typed.length}. For SBI it looks like SBIN0001234.`;
+      }
+      if (!/^[A-Z]{4}/.test(typed)) {
+        return 'The first 4 characters are the bank code and must be letters, e.g. SBIN for SBI, HDFC for HDFC Bank.';
+      }
+      return typed[4] !== '0'
+        ? 'The 5th character must be a zero (0), e.g. SBIN0001234.'
+        : 'The last 6 characters (the branch code) must be letters or digits.';
+    default:
+      return null;
+  }
+}
+
 /** Shown when a filled-in field has the wrong format; the backend applies the same rules. */
 const FIELD_MESSAGES: Record<FieldName, string> = {
   firstName: 'Use at most 100 characters.',
   lastName: 'Use at most 100 characters.',
   phone: 'Enter a 10-digit mobile number starting with 6, 7, 8 or 9, e.g. 9876543210.',
-  aadhaarNumber: 'This is not a valid Aadhaar number. Check the 12 digits on your Aadhaar card.',
+  aadhaarNumber: 'An Aadhaar number is 12 digits.',
   bankName: 'Use at most 100 characters.',
   confirmBankAccountNumber: 'The account numbers do not match.',
   gstin: 'A GSTIN is 15 letters and digits, e.g. 29ABCDE1234F1Z5. Leave it blank if you have none.',
@@ -240,8 +267,9 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
           </section>
       } @else {
         <p class="muted">Submit your business and payout details for manual review. You can publish listings once your owner profile is verified.</p>
+        <p class="muted" style="font-size:.875rem;margin-top:.35rem;">Fields marked <span class="required-mark">*</span> are required.</p>
         <form [formGroup]="form" (ngSubmit)="submit()" novalidate class="card" style="display:grid;gap:1rem;padding:1.5rem;margin-top:1.5rem;">
-          <label>Account type
+          <label>Account type <span class="required-mark" aria-hidden="true">*</span>
             <select formControlName="businessType" class="form-control">
               <option value="INDIVIDUAL">Individual</option>
               <option value="PROPRIETORSHIP">Proprietorship</option>
@@ -255,7 +283,7 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
           <div class="grid grid-cols-2" style="gap:1rem;">
             @for (field of personalFields; track field.name) {
               <div>
-                <label>{{ field.label }}
+                <label>{{ field.label }}@if (isRequired(field.name)) { <span class="required-mark" aria-hidden="true">*</span> }
                   <span style="display:flex;align-items:stretch;gap:.4rem;">
                     @if (field.prefix) {
                       <span aria-hidden="true" class="form-control" style="flex:none;width:auto;background:var(--color-bg-muted);">{{ field.prefix }}</span>
@@ -275,14 +303,14 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
           </div>
           <h2 style="font-size:1.2rem;">Bank account for payouts</h2>
           <div role="radiogroup" aria-label="Bank account type" style="display:flex;gap:1.5rem;">
-            <span>Account type</span>
+            <span>Account type <span class="required-mark" aria-hidden="true">*</span></span>
             <label><input type="radio" formControlName="bankAccountType" value="SAVINGS" /> Savings</label>
             <label><input type="radio" formControlName="bankAccountType" value="CURRENT" /> Current</label>
           </div>
           <div class="grid grid-cols-2" style="gap:1rem;">
             @for (field of payoutFields; track field.name) {
               <div>
-                <label>{{ field.label }}
+                <label>{{ field.label }}@if (isRequired(field.name)) { <span class="required-mark" aria-hidden="true">*</span> }
                   <span style="display:flex;align-items:stretch;gap:.4rem;">
                     @if (field.prefix) {
                       <span aria-hidden="true" class="form-control" style="flex:none;width:auto;background:var(--color-bg-muted);">{{ field.prefix }}</span>
@@ -311,7 +339,7 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
                    style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;padding:.65rem .9rem;border-radius:var(--radius-md);"
                    [style.border]="missing ? '1px solid var(--color-danger)' : '1px solid var(--color-border)'">
                 <div style="min-width:0;">
-                  <strong>{{ slot.label }}{{ slot.required ? '' : ' (optional)' }}</strong>
+                  <strong>{{ slot.label }}@if (slot.required) { <span class="required-mark" aria-hidden="true">*</span> } @else { (optional) }</strong>
                   <div class="muted" style="font-size:.8125rem;">{{ slot.hint }} · {{ slot.formats }}</div>
                   <div style="font-size:.875rem;margin-top:.2rem;overflow-wrap:anywhere;"
                        [style.color]="missing ? 'var(--color-danger)' : (chosen ? null : 'var(--color-text-muted)')">
@@ -393,6 +421,10 @@ export class OwnerOnboardingComponent implements OnInit {
     this.loadProfile();
   }
 
+  isRequired(name: FieldName): boolean {
+    return this.form.controls[name].hasValidator(Validators.required);
+  }
+
   /** The message for a field the user has left or tried to submit, or null when it is fine. */
   fieldError(name: FieldName): string | null {
     const control = this.form.controls[name];
@@ -402,7 +434,7 @@ export class OwnerOnboardingComponent implements OnInit {
     if (control.hasError('required')) {
       return 'Required.';
     }
-    return FIELD_MESSAGES[name];
+    return formatProblem(name, control.value) ?? FIELD_MESSAGES[name];
   }
 
   submit(): void {

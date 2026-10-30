@@ -8,6 +8,7 @@ import { env } from './support/env';
 export default defineConfig({
   testDir: './tests',
   globalSetup: require.resolve('./global-setup'),
+  globalTeardown: require.resolve('./global-teardown'),
   fullyParallel: false,
   workers: 1,
   retries: 0,

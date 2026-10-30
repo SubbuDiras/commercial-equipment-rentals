@@ -196,17 +196,22 @@ class OwnerOnboardingServiceTests {
     }
 
     @Test
-    void rejectsAnAadhaarNumberThatFailsTheChecksum() {
-        OwnerOnboardingRequest valid = request();
-        OwnerOnboardingRequest mistyped = new OwnerOnboardingRequest(valid.businessType(), valid.companyName(),
-                valid.gstin(), valid.pan(), valid.bankAccountNumber(), valid.bankIfsc(), valid.bankAccountHolderName(),
-                valid.firstName(), valid.lastName(), valid.phone(), "234123412347", valid.bankName(),
-                valid.bankAccountType());
-
-        assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), mistyped))
+    void acceptsAny12DigitAadhaarNumberAndRefusesOtherLengths() {
+        assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), withAadhaar("56748765123")))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("Aadhaar number is not valid");
+                .hasMessageContaining("Aadhaar number is 12 digits");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM owner_profiles", Integer.class)).isZero();
+
+        // Any 12 digits are fine; there is no checksum check.
+        ownerOnboardingService.submit(ownerJwt(), withAadhaar("567487651234"));
+        assertThat(jdbcTemplate.queryForObject("SELECT aadhaar_last4 FROM owner_profiles", String.class)).isEqualTo("1234");
+    }
+
+    private static OwnerOnboardingRequest withAadhaar(String aadhaarNumber) {
+        OwnerOnboardingRequest valid = request();
+        return new OwnerOnboardingRequest(valid.businessType(), valid.companyName(), valid.gstin(), valid.pan(),
+                valid.bankAccountNumber(), valid.bankIfsc(), valid.bankAccountHolderName(), valid.firstName(),
+                valid.lastName(), valid.phone(), aadhaarNumber, valid.bankName(), valid.bankAccountType());
     }
 
     @Test

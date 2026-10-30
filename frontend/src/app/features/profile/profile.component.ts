@@ -94,20 +94,11 @@ const ROLE_LABELS: Record<string, string> = {
               <dd>
                 @if (canChooseOwner(me)) {
                   <!-- A renter sees both account types: Renter (theirs now) and Owner (apply for it). -->
-                  <div role="group" aria-label="Choose account type" style="display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;">
-                    <span class="account-type-option" aria-current="true"
-                          style="padding: .35rem .9rem; border-radius: 999px; border: 2px solid var(--color-primary-light); background: var(--color-primary-light); color: #fff; font-weight: 600; font-size: .875rem;">
-                      ✓ Renter
-                    </span>
-                    <a routerLink="/owner/onboarding" class="account-type-option"
-                       style="padding: .35rem .9rem; border-radius: 999px; border: 2px solid var(--color-border); color: var(--color-text-main); font-weight: 600; font-size: .875rem; text-decoration: none;">
-                      Owner
-                      <span style="font-weight: 400; color: var(--color-text-muted);">· {{ ownerOptionHint() }}</span>
-                    </a>
+                  <div role="group" aria-label="Choose account type">
+                    <a routerLink="/owner/onboarding" class="badge badge-role" style="margin-right: .35rem; text-decoration: none;"
+                       [title]="'Owner: ' + ownerOptionHint()" [attr.aria-label]="'Owner: ' + ownerOptionHint()">Owner</a>
+                    <span class="badge badge-role" aria-current="true">Renter</span>
                   </div>
-                  <small class="muted" style="display: block; margin-top: .35rem;">
-                    Renters hire equipment. Owners also list their own equipment for rent, after a quick verification.
-                  </small>
                 } @else {
                   @for (role of accountTypes(me); track role) {
                     <span class="badge badge-role" style="margin-right: .35rem;">{{ roleLabel(role) }}</span>

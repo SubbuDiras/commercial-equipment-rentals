@@ -365,12 +365,25 @@ class EquipmentCatalogueTests {
 
         var results = catalogueService.search(null, null, null, null, 0, 20).content();
 
+        // Cards get the stable cover address (storage links expire), naming the cover image so a new cover is a new URL.
         assertThat(results).filteredOn(listing -> listing.id().equals(withPhoto.id()))
                 .singleElement().extracting(EquipmentListingResponse::primaryImageUrl)
-                .isEqualTo("https://storage.test/equipment/" + withPhoto.id() + "/images/" + first.imageId() + ".jpg");
+                .isEqualTo("/api/v1/equipment/" + withPhoto.id() + "/cover?v=" + first.imageId());
         assertThat(results).filteredOn(listing -> listing.id().equals(withoutPhoto.id()))
                 .singleElement().extracting(EquipmentListingResponse::primaryImageUrl).isNull();
         assertThat(catalogueService.getPublicListing(withPhoto.id()).primaryImageUrl()).isNull();
+
+        // The address hands out a fresh storage link each time, for live listings only.
+        assertThat(catalogueService.coverPhotoUrl(withPhoto.id()))
+                .isEqualTo("https://storage.test/equipment/" + withPhoto.id() + "/images/" + first.imageId() + ".jpg");
+        assertThatThrownBy(() -> catalogueService.coverPhotoUrl(withoutPhoto.id()))
+                .isInstanceOf(ResourceNotFoundException.class);
+        EquipmentListingResponse draft = catalogueService.create(ownerJwt("owner-1"), request(CATEGORY_ID));
+        var draftImage = mediaService.presign(draft.id(),
+                new EquipmentImageUploadRequest("image/jpeg", 1024), ownerJwt("owner-1"));
+        mediaService.complete(draft.id(), draftImage.imageId(), ownerJwt("owner-1"));
+        assertThatThrownBy(() -> catalogueService.coverPhotoUrl(draft.id()))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test

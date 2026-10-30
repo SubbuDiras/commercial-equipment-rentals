@@ -30,6 +30,11 @@ export class Api {
     return this.post('/api/v1/dev/seed/owner-listing');
   }
 
+  /** Gives every listing without a photo a sample one (admin). */
+  addSamplePhotos(): Promise<{ listingsWithoutPhotos: number; photosAttached: number }> {
+    return this.post('/api/v1/dev/seed/listing-photos');
+  }
+
   shiftTime(bookingId: string, hours: number): Promise<Json> {
     return this.post(`/api/v1/dev/bookings/${bookingId}/shift-time?hours=${hours}`);
   }

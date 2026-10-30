@@ -41,8 +41,8 @@ test('a user opens their profile from the header, and edits their name and phone
   await expect(details).toContainText('Renter');
   // A renter sees both account types: Renter (current) and Owner, which leads to the owner application.
   const accountType = details.getByRole('group', { name: 'Choose account type' });
-  await expect(accountType.locator('[aria-current=true]')).toHaveText('✓ Renter');
-  await expect(accountType.getByRole('link', { name: /Owner · apply to list equipment/ })).toHaveAttribute('href', '/owner/onboarding');
+  await expect(accountType.locator('[aria-current=true]')).toHaveText('Renter');
+  await expect(accountType.getByRole('link', { name: 'Owner: apply to list equipment' })).toHaveAttribute('href', '/owner/onboarding');
   await expect(page.getByRole('region', { name: 'Equipment owner' }).getByRole('link', { name: 'Become an owner' })).toBeVisible();
   await expect(page.getByRole('link', { name: /Change email or password/ }))
     .toHaveAttribute('href', /\/realms\/marketplace-realm\/account$/);

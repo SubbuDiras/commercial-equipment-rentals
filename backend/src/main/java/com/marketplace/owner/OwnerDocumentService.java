@@ -109,23 +109,25 @@ public class OwnerDocumentService {
     @Transactional
     public String ownerDownloadUrl(String ownerProfileId, String documentId, Jwt jwt) {
         requireOwnerProfile(ownerProfileId, jwt.getSubject());
-        return downloadUrl(ownerProfileId, documentId, jwt.getSubject(), "OWNER_KYC_DOCUMENT_ACCESSED");
+        return downloadUrl(ownerProfileId, documentId, jwt.getSubject(), "OWNER_KYC_DOCUMENT_ACCESSED", false);
     }
 
     @Transactional
-    public String adminDownloadUrl(String ownerProfileId, String documentId, Jwt adminJwt) {
+    /** Inline links are shown in the admin review page (photos and PDFs) instead of being saved as files. */
+    public String adminDownloadUrl(String ownerProfileId, String documentId, Jwt adminJwt, boolean inline) {
         requireProfileExists(ownerProfileId);
-        return downloadUrl(ownerProfileId, documentId, adminJwt.getSubject(), "OWNER_KYC_DOCUMENT_ACCESSED_BY_ADMIN");
+        return downloadUrl(ownerProfileId, documentId, adminJwt.getSubject(), "OWNER_KYC_DOCUMENT_ACCESSED_BY_ADMIN", inline);
     }
 
-    private String downloadUrl(String ownerProfileId, String documentId, String actorSubject, String action) {
+    private String downloadUrl(String ownerProfileId, String documentId, String actorSubject, String action,
+                               boolean inline) {
         DocumentRow document = findDocument(ownerProfileId, documentId);
         if (document == null || (!"PENDING".equals(document.status()) && !"VERIFIED".equals(document.status()))) {
             throw new ResourceNotFoundException("Uploaded owner document not found.");
         }
         String actorUserId = findUserId(actorSubject);
         writeAudit(actorUserId, action, ownerProfileId, Map.of("documentId", documentId));
-        return objectStorage.presignGet(document.objectKey());
+        return objectStorage.presignGet(document.objectKey(), !inline);
     }
 
     private List<OwnerDocumentResponse> listDocuments(String ownerProfileId) {

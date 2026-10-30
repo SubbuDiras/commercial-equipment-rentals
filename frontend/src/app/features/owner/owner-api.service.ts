@@ -131,9 +131,10 @@ export class OwnerApiService {
     return this.http.get<OwnerDocument[]>(`/api/v1/admin/owners/${id(ownerProfileId)}/documents`);
   }
 
-  adminDocumentDownload(ownerProfileId: string, documentId: string): Observable<{ downloadUrl: string }> {
+  /** With inline, the link displays the file in the page (for previews) rather than downloading it. */
+  adminDocumentDownload(ownerProfileId: string, documentId: string, inline = false): Observable<{ downloadUrl: string }> {
     return this.http.get<{ downloadUrl: string }>(
-      `/api/v1/admin/owners/${id(ownerProfileId)}/documents/${id(documentId)}/download`);
+      `/api/v1/admin/owners/${id(ownerProfileId)}/documents/${id(documentId)}/download`, { params: { inline } });
   }
 
   linkRazorpayAccount(ownerProfileId: string, linkedAccountId: string): Observable<unknown> {

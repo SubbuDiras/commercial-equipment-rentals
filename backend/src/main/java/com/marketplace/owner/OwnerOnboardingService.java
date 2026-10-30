@@ -52,7 +52,7 @@ public class OwnerOnboardingService {
             throw new ConflictException("The authenticated account must provide a subject and email address.");
         }
         if (!Aadhaar.isValid(request.aadhaarNumber())) {
-            throw new BadRequestException("This Aadhaar number is not valid. Check the 12 digits on your Aadhaar card.");
+            throw new BadRequestException("An Aadhaar number is 12 digits. Check the number on your Aadhaar card.");
         }
 
         try {
