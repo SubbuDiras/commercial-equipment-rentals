@@ -149,6 +149,14 @@ class MySqlLifecycleTests {
         BookingDetailsResponse returned = bookingDetailsService.get(bookingId, owner, List.of());
         assertThat(returned.inspections()).hasSize(2).allSatisfy(report -> assertThat(report.photos()).hasSize(4));
         assertThat(returned.disputeDeadline()).isAfter(Instant.now());
+        // The booking page shows the equipment's photo and each party's profile photo, when they have one.
+        assertThat(returned.photos().equipment()).isEqualTo("http://storage.test/view");
+        assertThat(returned.photos().renter()).isNull();
+        jdbcTemplate.update("UPDATE users SET profile_photo_key = 'users/r/profile.jpeg' WHERE keycloak_subject_id = ?",
+                renter.getSubject());
+        assertThat(bookingDetailsService.get(bookingId, owner, List.of()).photos())
+                .extracting("equipment", "owner", "renter")
+                .containsExactly("http://storage.test/view", null, "http://storage.test/view");
 
         inspections.approveCondition(bookingId, owner);
         devTools.runScheduledJobs();                   // deposit refund + held owner transfer

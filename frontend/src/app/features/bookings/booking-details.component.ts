@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -31,7 +31,7 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
 @Component({
   selector: 'app-booking-details',
   standalone: true,
-  imports: [DatePipe, ReactiveFormsModule, RouterLink, ConfirmDialogComponent, InrPipe, StatusBadgeComponent,
+  imports: [DatePipe, NgTemplateOutlet, ReactiveFormsModule, RouterLink, ConfirmDialogComponent, InrPipe, StatusBadgeComponent,
     CancelDialogComponent, InspectionWizardComponent, PaymentDialogComponent],
   template: `
     <main class="container" style="max-width: 1000px; padding: 3rem 1rem;">
@@ -49,9 +49,19 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
 
       @if (booking(); as b) {
         <header style="display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: flex-start;">
-          <div>
-            <h1 style="font-size: 1.6rem;"><a [routerLink]="['/equipment', b.equipmentId]">{{ b.equipmentTitle }}</a></h1>
-            <div class="muted">Booking {{ b.bookingReference }}</div>
+          <div style="display: flex; gap: 1rem; align-items: center; min-width: 0;">
+            <a [routerLink]="['/equipment', b.equipmentId]" style="flex: none;">
+              @if (b.photos?.equipment) {
+                <img [src]="b.photos!.equipment" [alt]="'Photo of ' + b.equipmentTitle" width="120" height="90"
+                     style="width: 120px; height: 90px; object-fit: contain; background: #fff; border: 1px solid var(--color-border); border-radius: var(--radius-md);" />
+              } @else {
+                <div aria-hidden="true" style="width: 120px; height: 90px; border-radius: var(--radius-md); background: var(--color-bg-muted);"></div>
+              }
+            </a>
+            <div style="min-width: 0;">
+              <h1 style="font-size: 1.6rem;"><a [routerLink]="['/equipment', b.equipmentId]">{{ b.equipmentTitle }}</a></h1>
+              <div class="muted">Booking {{ b.bookingReference }}</div>
+            </div>
           </div>
           <app-status-badge [status]="b.status" />
         </header>
@@ -140,8 +150,23 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
               <dt>Start</dt><dd>{{ b.startTime | date:'medium' }}</dd>
               <dt>End</dt><dd>{{ b.endTime | date:'medium' }}</dd>
               <dt>Collection</dt><dd>{{ b.deliveryOption === 'OWNER_DELIVERY' ? 'Owner delivers' : 'Renter collects' }}</dd>
-              <dt>Owner</dt><dd>{{ b.ownerName }}</dd>
-              <dt>Renter</dt><dd>{{ b.renterName }}</dd>
+              <dt>Owner</dt>
+              <dd style="display: flex; align-items: center; gap: .5rem;">
+                <ng-container *ngTemplateOutlet="person; context: { photo: b.photos?.owner, name: b.ownerName }" />
+              </dd>
+              <dt>Renter</dt>
+              <dd style="display: flex; align-items: center; gap: .5rem;">
+                <ng-container *ngTemplateOutlet="person; context: { photo: b.photos?.renter, name: b.renterName }" />
+              </dd>
+              <ng-template #person let-photo="photo" let-name="name">
+                @if (photo) {
+                  <img [src]="photo" [alt]="'Photo of ' + name" width="40" height="40"
+                       style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1px solid var(--color-border);" />
+                } @else {
+                  <span aria-hidden="true" style="width: 40px; height: 40px; border-radius: 50%; display: inline-grid; place-items: center; font-size: .8125rem; font-weight: 700; color: #fff; background: var(--color-primary-light);">{{ initials(name) }}</span>
+                }
+                {{ name }}
+              </ng-template>
               @if (b.holdExpiresAt && (b.status === 'REQUESTED' || b.status === 'PAYMENT_PENDING' || b.status === 'PAYMENT_FAILED')) {
                 <dt>Hold expires</dt><dd>{{ b.holdExpiresAt | date:'short' }}</dd>
               }
@@ -273,6 +298,11 @@ export class BookingDetailsComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly api = inject(BookingApiService);
   private readonly formBuilder = inject(FormBuilder);
+
+  /** Shown in place of a profile photo the person has not added. */
+  initials(name: string): string {
+    return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
+  }
 
   readonly booking = signal<BookingDetails | null>(null);
   readonly loading = signal(true);

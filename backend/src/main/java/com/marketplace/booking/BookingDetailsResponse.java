@@ -29,8 +29,13 @@ public record BookingDetailsResponse(
         Instant disputeDeadline,
         Cancellation cancellation,
         List<ReviewResponse> reviews,
-        List<BookingAction> availableActions
+        List<BookingAction> availableActions,
+        /** Short-lived links (null when there is no photo): the equipment's cover and each party's profile photo. */
+        Photos photos
 ) {
+
+    public record Photos(String equipment, String owner, String renter) {
+    }
 
     /** Present only on cancelled bookings: who cancelled, why, and the refund breakdown that was applied. */
     public record Cancellation(

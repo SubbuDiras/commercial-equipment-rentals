@@ -103,6 +103,8 @@ export interface BookingDetails extends Booking {
   equipmentTitle: string;
   ownerName: string;
   renterName: string;
+  /** Short-lived links, null when there is no photo. */
+  photos?: { equipment: string | null; owner: string | null; renter: string | null };
   viewerRole: 'RENTER' | 'OWNER' | 'ADMIN';
   payment: {
     paymentId: string;

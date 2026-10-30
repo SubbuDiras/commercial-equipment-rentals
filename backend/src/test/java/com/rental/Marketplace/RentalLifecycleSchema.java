@@ -35,6 +35,7 @@ final class RentalLifecycleSchema {
         jdbcTemplate.execute("DROP TABLE IF EXISTS booking_status_history");
         jdbcTemplate.execute("DROP TABLE IF EXISTS audit_logs");
         jdbcTemplate.execute("DROP TABLE IF EXISTS bookings");
+        jdbcTemplate.execute("DROP TABLE IF EXISTS equipment_images");
         jdbcTemplate.execute("DROP TABLE IF EXISTS equipment");
         jdbcTemplate.execute("DROP TABLE IF EXISTS equipment_categories");
         jdbcTemplate.execute("DROP TABLE IF EXISTS owner_profiles");
@@ -46,7 +47,8 @@ final class RentalLifecycleSchema {
                     email VARCHAR(255) NOT NULL UNIQUE,
                     phone VARCHAR(20),
                     first_name VARCHAR(100) NOT NULL,
-                    last_name VARCHAR(100) NOT NULL
+                    last_name VARCHAR(100) NOT NULL,
+                    profile_photo_key VARCHAR(255)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -74,6 +76,16 @@ final class RentalLifecycleSchema {
                     category_id CHAR(36) NOT NULL,
                     title VARCHAR(255) NOT NULL DEFAULT 'Phase four breaker',
                     status VARCHAR(30) NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE equipment_images (
+                    id CHAR(36) PRIMARY KEY,
+                    equipment_id CHAR(36) NOT NULL,
+                    storage_object_key VARCHAR(512) NOT NULL,
+                    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+                    display_order INT NOT NULL DEFAULT 0,
+                    uploaded_at TIMESTAMP(6)
                 )
                 """);
         jdbcTemplate.execute("""

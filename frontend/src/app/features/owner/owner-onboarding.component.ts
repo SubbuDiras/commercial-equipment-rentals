@@ -5,6 +5,7 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 import { ApiError } from '../../core/interceptors/error.interceptor';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
+import { ProfileApiService } from '../profile/profile-api.service';
 import { aadhaarValidator } from './aadhaar';
 import { DOCUMENT_TYPES, documentTypeLabel, OwnerApiService, OwnerDocument, OwnerProfile } from './owner-api.service';
 
@@ -144,7 +145,7 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
 
       @if (loading()) {
         <p role="status">Loading your application…</p>
-      } @else if (profile(); as current) {
+      } @else if (!reapplying() && profile(); as current) {
         <section class="card" style="padding:1.5rem;margin-top:1.5rem;">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
             <h2 style="font-size:1.2rem;">{{ current.businessName || 'Your owner application' }}</h2>
@@ -188,7 +189,10 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
                 @if (current.rejectionReason) {
                   <div style="margin-top:.5rem;">Reason: <em>{{ current.rejectionReason }}</em></div>
                 }
-                <div style="margin-top:.5rem;">Please contact support to update your details and request a new review.</div>
+                <div style="margin-top:.5rem;">Correct your details and documents, then apply again.</div>
+                <div style="margin-top:.75rem;">
+                  <button type="button" class="btn btn-primary" (click)="startReapply(current)">Update details and reapply</button>
+                </div>
               </div>
             }
             @default {
@@ -266,6 +270,15 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
             }
           </section>
       } @else {
+        @if (reapplying() && profile(); as rejected) {
+          <div class="alert alert-warning" role="status">
+            <strong>Reapplying.</strong> Correct what was wrong and submit again; your application goes back to review.
+            @if (rejected.rejectionReason) {
+              <div style="margin-top:.35rem;">Reason it was not approved: <em>{{ rejected.rejectionReason }}</em></div>
+            }
+            <div style="margin-top:.35rem;">For your security, enter your Aadhaar and bank account numbers again.</div>
+          </div>
+        }
         <p class="muted">Submit your business and payout details for manual review. You can publish listings once your owner profile is verified.</p>
         <p class="muted" style="font-size:.875rem;margin-top:.35rem;">Fields marked <span class="required-mark">*</span> are required.</p>
         <form [formGroup]="form" (ngSubmit)="submit()" novalidate class="card" style="display:grid;gap:1rem;padding:1.5rem;margin-top:1.5rem;">
@@ -334,7 +347,8 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
           <div style="display:grid;gap:.6rem;">
             @for (slot of keyDocuments; track slot.type) {
               @let chosen = chosenFiles()[slot.type];
-              @let missing = documentsChecked() && slot.required && !chosen;
+              @let earlier = latestDocument(slot.type);
+              @let missing = documentsChecked() && slot.required && !chosen && !earlier;
               <div role="group" [attr.aria-label]="slot.label"
                    style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;padding:.65rem .9rem;border-radius:var(--radius-md);"
                    [style.border]="missing ? '1px solid var(--color-danger)' : '1px solid var(--color-border)'">
@@ -343,7 +357,13 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
                   <div class="muted" style="font-size:.8125rem;">{{ slot.hint }} · {{ slot.formats }}</div>
                   <div style="font-size:.875rem;margin-top:.2rem;overflow-wrap:anywhere;"
                        [style.color]="missing ? 'var(--color-danger)' : (chosen ? null : 'var(--color-text-muted)')">
-                    {{ chosen ? chosen.file.name : (missing ? 'Required.' : 'No file chosen') }}
+                    @if (chosen) {
+                      {{ chosen.file.name }}{{ earlier ? ' (replaces ' + earlier.originalFilename + ')' : '' }}
+                    } @else if (earlier) {
+                      Keeping {{ earlier.originalFilename }}, uploaded earlier
+                    } @else {
+                      {{ missing ? 'Required.' : 'No file chosen' }}
+                    }
                   </div>
                 </div>
                 <div style="display:flex;gap:.4rem;">
@@ -352,7 +372,7 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
                             [attr.aria-label]="'Remove ' + slot.label + ' file'">Remove</button>
                   }
                   <label class="btn btn-secondary">
-                    {{ chosen ? 'Change' : 'Choose JPG' }}
+                    {{ chosen ? 'Change' : (earlier ? 'Replace' : 'Choose JPG') }}
                     <input type="file" [attr.accept]="slot.accept" [attr.aria-label]="'Choose ' + slot.label + ' file'"
                            (change)="choose(slot.type, $event)" [disabled]="submitting()" style="display:none;" />
                   </label>
@@ -367,8 +387,11 @@ const FIELD_MESSAGES: Record<FieldName, string> = {
             <div class="alert alert-error" role="alert">{{ error() }}</div>
           }
           <button class="btn btn-primary" type="submit" [disabled]="submitting()">
-            {{ submitting() ? (uploadingType() ? 'Uploading documents…' : 'Submitting…') : 'Submit for verification' }}
+            {{ submitting() ? (uploadingType() ? 'Uploading documents…' : 'Submitting…') : (reapplying() ? 'Reapply for verification' : 'Submit for verification') }}
           </button>
+          @if (reapplying()) {
+            <button class="btn btn-secondary" type="button" (click)="cancelReapply()" [disabled]="submitting()">Cancel</button>
+          }
         </form>
       }
     </main>
@@ -399,6 +422,9 @@ export class OwnerOnboardingComponent implements OnInit {
   readonly chosenFiles = signal<Record<string, { file: File; contentType: string }>>({});
   /** Set on the first submit attempt, so missing documents are only flagged after the user tries. */
   readonly documentsChecked = signal(false);
+  /** A rejected applicant is correcting their details in the form to apply again. */
+  readonly reapplying = signal(false);
+  private readonly profileApi = inject(ProfileApiService);
 
   readonly form = this.formBuilder.nonNullable.group({
     businessType: ['INDIVIDUAL', Validators.required],
@@ -437,12 +463,51 @@ export class OwnerOnboardingComponent implements OnInit {
     return formatProblem(name, control.value) ?? FIELD_MESSAGES[name];
   }
 
+  /**
+   * Opens the form again with the rejected application's answers. Aadhaar and the bank account number are only kept
+   * partly (last 4 digits), so the applicant types them again.
+   */
+  startReapply(current: OwnerProfile): void {
+    const kyc = current.kyc;
+    this.form.reset({
+      businessType: current.businessType,
+      bankAccountType: kyc?.bankAccountType ?? 'SAVINGS',
+      pan: kyc?.pan ?? '',
+      gstin: kyc?.gstin ?? '',
+      bankName: kyc?.bankName ?? '',
+      bankIfsc: kyc?.bankIfsc ?? '',
+      bankAccountHolderName: kyc?.bankAccountHolderName ?? '',
+      phone: (kyc?.phone ?? '').replace(/^\+91/, '')
+    });
+    this.profileApi.get().subscribe(me => {
+      this.form.patchValue({ firstName: me.firstName, lastName: me.lastName });
+      // The business name defaults to the person's name when none was given; only a real one goes back in.
+      if (current.businessName && current.businessName !== `${me.firstName} ${me.lastName}`) {
+        this.form.patchValue({ companyName: current.businessName });
+      }
+    });
+    this.error.set(null);
+    this.documentError.set(null);
+    this.documentsChecked.set(false);
+    this.chosenFiles.set({});
+    this.reapplying.set(true);
+  }
+
+  cancelReapply(): void {
+    this.reapplying.set(false);
+    this.chosenFiles.set({});
+    this.error.set(null);
+  }
+
   submit(): void {
     this.error.set(null);
     this.documentError.set(null);
     this.normalise();
     this.documentsChecked.set(true);
-    const missing = KEY_DOCUMENTS.filter(slot => slot.required && !this.chosenFiles()[slot.type]).map(slot => slot.label);
+    // When reapplying, a document uploaded with the earlier application still counts unless it is replaced.
+    const missing = KEY_DOCUMENTS
+      .filter(slot => slot.required && !this.chosenFiles()[slot.type] && !this.latestDocument(slot.type))
+      .map(slot => slot.label);
     if (this.form.invalid || missing.length) {
       this.form.markAllAsTouched();
       this.error.set(missing.length
@@ -463,6 +528,7 @@ export class OwnerOnboardingComponent implements OnInit {
         const failed = await this.uploadChosen(submitted.ownerProfileId);
         this.submitting.set(false);
         this.chosenFiles.set({});
+        this.reapplying.set(false);
         this.loadProfile();
         if (failed.length) {
           this.documentError.set(`Your details were submitted, but ${failed.join(', ')} could not be uploaded. ` +
@@ -543,7 +609,8 @@ export class OwnerOnboardingComponent implements OnInit {
 
   /** The most recent upload of a type; a replacement is a newer upload, and reviewers see every version. */
   latestDocument(type: string): OwnerDocument | undefined {
-    return this.documents().filter(document => document.documentType === type).at(-1);
+    // The API lists the newest upload first.
+    return this.documents().find(document => document.documentType === type);
   }
 
   /** Drops anything but digits as it is typed or pasted; a pasted +91 or 91 country code is removed from a phone. */

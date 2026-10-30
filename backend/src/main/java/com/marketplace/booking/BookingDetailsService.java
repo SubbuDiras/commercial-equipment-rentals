@@ -8,8 +8,12 @@ import com.marketplace.rental.InspectionType;
 import com.marketplace.rental.RentalInspectionService;
 import com.marketplace.review.ReviewResponse;
 import com.marketplace.review.ReviewService;
+import com.marketplace.storage.PrivateObjectStorage;
 import com.marketplace.user.UserProfileService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -20,10 +24,14 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class BookingDetailsService {
+
+    private static final Logger log = LoggerFactory.getLogger(BookingDetailsService.class);
 
     private static final int MIN_INSPECTION_PHOTOS = 4;
 
@@ -32,19 +40,22 @@ public class BookingDetailsService {
     private final InspectionReportReader inspectionReportReader;
     private final PaymentService paymentService;
     private final ReviewService reviewService;
+    private final PrivateObjectStorage objectStorage;
 
     public BookingDetailsService(
             JdbcTemplate jdbcTemplate,
             UserProfileService userProfileService,
             InspectionReportReader inspectionReportReader,
             PaymentService paymentService,
-            ReviewService reviewService
+            ReviewService reviewService,
+            PrivateObjectStorage objectStorage
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.userProfileService = userProfileService;
         this.inspectionReportReader = inspectionReportReader;
         this.paymentService = paymentService;
         this.reviewService = reviewService;
+        this.objectStorage = objectStorage;
     }
 
     @Transactional(readOnly = true)
@@ -101,7 +112,41 @@ public class BookingDetailsService {
                         ? cancellation(bookingId)
                         : null,
                 reviews,
-                actions);
+                actions,
+                photos(base.equipmentId(), booking.ownerUserId(), booking.renterUserId()));
+    }
+
+    /**
+     * The equipment's cover (whatever the listing's status now: the booking is the participants' own record) and the
+     * two parties' profile photos. A storage hiccup leaves a photo out rather than failing the whole booking page.
+     */
+    private BookingDetailsResponse.Photos photos(String equipmentId, String ownerUserId, String renterUserId) {
+        List<String> equipmentKeys = jdbcTemplate.queryForList("""
+                        SELECT storage_object_key FROM equipment_images
+                        WHERE equipment_id = ? AND uploaded_at IS NOT NULL
+                        ORDER BY is_primary DESC, display_order, id
+                        LIMIT 1
+                        """, String.class, equipmentId);
+        Map<String, String> profileKeys = new HashMap<>();
+        jdbcTemplate.query("SELECT id, profile_photo_key FROM users WHERE id IN (?, ?)",
+                (RowCallbackHandler) rs -> profileKeys.put(rs.getString("id"), rs.getString("profile_photo_key")),
+                ownerUserId, renterUserId);
+        return new BookingDetailsResponse.Photos(
+                link(equipmentKeys.isEmpty() ? null : equipmentKeys.get(0)),
+                link(profileKeys.get(ownerUserId)),
+                link(profileKeys.get(renterUserId)));
+    }
+
+    private String link(String objectKey) {
+        if (objectKey == null) {
+            return null;
+        }
+        try {
+            return objectStorage.presignGet(objectKey, false);
+        } catch (RuntimeException exception) {
+            log.warn("Photo {} could not be linked: {}", objectKey, exception.getMessage());
+            return null;
+        }
     }
 
     private List<BookingAction> availableActions(

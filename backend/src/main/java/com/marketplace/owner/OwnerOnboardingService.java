@@ -66,7 +66,7 @@ public class OwnerOnboardingService {
                         """,
                         userId, subject, email, request.phone(), request.firstName(), request.lastName());
             } else if (ownerProfileExists(userId)) {
-                throw new ConflictException("An owner profile already exists for this account.");
+                return resubmitRejected(userId, request);
             } else {
                 // The row was created on an earlier visit, from the sign-in token; keep what the applicant just entered.
                 jdbcTemplate.update("UPDATE users SET phone = ?, first_name = ?, last_name = ? WHERE id = ?",
@@ -105,6 +105,45 @@ public class OwnerOnboardingService {
         } catch (DataIntegrityViolationException exception) {
             throw new ConflictException(duplicateDetailsMessage(exception));
         }
+    }
+
+    /**
+     * A rejected applicant applies again with corrected details: the same application is updated and goes back to
+     * review, keeping its documents (the applicant uploads replacements next to them). Any other existing application
+     * (under review, verified, suspended) cannot be overwritten this way.
+     */
+    private OwnerProfileResponse resubmitRejected(String userId, OwnerOnboardingRequest request) {
+        Map<String, Object> existing = jdbcTemplate.queryForMap(
+                "SELECT id, organization_id, verification_status FROM owner_profiles WHERE user_id = ? FOR UPDATE", userId);
+        String profileId = (String) existing.get("id");
+        if (!OwnerVerificationStatus.REJECTED.name().equals(existing.get("verification_status"))) {
+            throw new ConflictException("You have already submitted an owner application. Reload the page to see its status.");
+        }
+        jdbcTemplate.update("UPDATE users SET phone = ?, first_name = ?, last_name = ? WHERE id = ?",
+                request.phone(), request.firstName(), request.lastName(), userId);
+        String businessName = request.companyName() == null || request.companyName().isBlank()
+                ? request.firstName() + " " + request.lastName()
+                : request.companyName().trim();
+        jdbcTemplate.update("""
+                UPDATE organizations SET legal_name = ?, trade_name = ?, gstin = ?, pan = ? WHERE id = ?
+                """,
+                businessName, request.companyName(), emptyToNull(request.gstin()), request.pan(),
+                existing.get("organization_id"));
+        jdbcTemplate.update("""
+                UPDATE owner_profiles
+                SET business_type = ?, bank_account_number = ?, bank_ifsc = ?, bank_account_holder_name = ?,
+                    bank_name = ?, bank_account_type = ?, aadhaar_last4 = ?, verification_status = ?,
+                    rejection_reason = NULL, verified_at = NULL, verified_by_user_id = NULL
+                WHERE id = ?
+                """,
+                request.businessType(), request.bankAccountNumber(), request.bankIfsc(),
+                request.bankAccountHolderName(), request.bankName().trim(), request.bankAccountType(),
+                Aadhaar.lastFour(request.aadhaarNumber()), OwnerVerificationStatus.UNDER_REVIEW.name(), profileId);
+
+        writeAudit(userId, "OWNER_ONBOARDING_RESUBMITTED", "owner_profiles", profileId,
+                Map.of("businessType", request.businessType(), "status", OwnerVerificationStatus.UNDER_REVIEW.name()));
+        events.publishEvent(NotificationEvent.of(NotificationType.KYC_SUBMITTED, profileId));
+        return new OwnerProfileResponse(profileId, OwnerVerificationStatus.UNDER_REVIEW.name(), Instant.now());
     }
 
     @Transactional(readOnly = true)

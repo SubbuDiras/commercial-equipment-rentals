@@ -196,6 +196,11 @@ test('booking page: incomplete claim, inspection and review are explained', asyn
 
   const ownerPage = await signedInPage(browser, users.owner.email);
   await openBooking(ownerPage, returned);
+  // The equipment's photo is shown; the renter has no profile photo, so their initials are.
+  const equipmentPhoto = ownerPage.getByRole('img', { name: /^Photo of / });
+  await expect.poll(() => equipmentPhoto.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  await expect(ownerPage.getByRole('definition').filter({ hasText: `${users.renter.firstName} ${users.renter.lastName}` }))
+    .toContainText(`${users.renter.firstName[0]}${users.renter.lastName[0]}`);
   await ownerPage.getByRole('button', { name: 'Raise damage claim' }).click();
   await ownerPage.getByRole('button', { name: 'Submit claim' }).click();
   await expect(ownerPage.getByRole('alert')).toHaveText('Please check the highlighted fields: Claim amount (₹), What happened.');

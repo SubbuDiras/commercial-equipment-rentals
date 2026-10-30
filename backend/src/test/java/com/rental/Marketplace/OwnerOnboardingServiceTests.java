@@ -266,7 +266,37 @@ class OwnerOnboardingServiceTests {
 
         assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), request()))
                 .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("already exists");
+                .hasMessageContaining("already submitted an owner application");
+    }
+
+    @Test
+    void aRejectedApplicantReappliesWithCorrectedDetailsAndGoesBackToReview() {
+        OwnerProfileResponse first = ownerOnboardingService.submit(ownerJwt(), request());
+        ownerOnboardingService.reject(first.ownerProfileId(), adminJwt(), "PAN does not match the card.");
+
+        OwnerOnboardingRequest original = request();
+        OwnerOnboardingRequest corrected = new OwnerOnboardingRequest(original.businessType(), original.companyName(),
+                original.gstin(), "ZZZZZ9999Z", "1112223334", "SBIN0001234", original.bankAccountHolderName(),
+                original.firstName(), original.lastName(), original.phone(), "567487651234", "State Bank of India",
+                "SAVINGS");
+        OwnerProfileResponse again = ownerOnboardingService.submit(ownerJwt(), corrected);
+
+        // The same application, back under review with the new details and the old reason cleared.
+        assertThat(again.ownerProfileId()).isEqualTo(first.ownerProfileId());
+        OwnerProfileDetailsResponse mine = ownerOnboardingService.findMine(ownerJwt());
+        assertThat(mine.status()).isEqualTo(OwnerVerificationStatus.UNDER_REVIEW.name());
+        assertThat(mine.rejectionReason()).isNull();
+        assertThat(mine.kyc()).extracting("pan", "aadhaarLast4", "bankName", "bankAccountNumber", "bankIfsc")
+                .containsExactly("ZZZZZ9999Z", "1234", "State Bank of India", "••••••3334", "SBIN0001234");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM owner_profiles", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE action = 'OWNER_ONBOARDING_RESUBMITTED'", Integer.class)).isEqualTo(1);
+
+        // The admin can decide again.
+        assertThat(ownerOnboardingService.approve(first.ownerProfileId(), adminJwt()).status())
+                .isEqualTo(OwnerVerificationStatus.VERIFIED.name());
+        assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), corrected))
+                .isInstanceOf(ConflictException.class);
     }
 
     @Test
