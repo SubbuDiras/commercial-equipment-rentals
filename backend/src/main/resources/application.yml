@@ -21,6 +21,12 @@ spring:
       write-dates-as-timestamps: false
     time-zone: UTC
 
+  # Profile photos are posted to the backend (other files go straight to storage); the browser sends a small crop.
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+
   # Emails are sent after commit on the request thread; keep a dead SMTP server from stalling requests.
   mail:
     properties:

@@ -1,6 +1,7 @@
-import { Component, inject } from '@angular/core';
+import { Component, effect, inject, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
+import { ProfileApiService } from '../../features/profile/profile-api.service';
 import { AuthService } from '../auth/auth.service';
 
 const ROLE_LABELS: Record<string, string> = {
@@ -67,13 +68,21 @@ const ROLE_LABELS: Record<string, string> = {
         <!-- Right User Actions -->
         <div style="display: flex; align-items: center; gap: 1rem; flex-shrink: 0;">
           <ng-container *ngIf="auth.isAuthenticated(); else loginBtn">
-            <a routerLink="/profile" title="My profile" aria-label="My profile" style="text-align: right; white-space: nowrap; color: inherit; text-decoration: none;">
-              <div style="font-size: 0.875rem; font-weight: 600; line-height: 1.3;">{{ auth.currentUser()?.name }} <span aria-hidden="true" style="color: var(--color-text-muted);">›</span></div>
-              <div style="display: flex; gap: 0.25rem; justify-content: flex-end; margin-top: 0.125rem;">
-                <span *ngIf="primaryRole() as role" class="badge badge-role">
-                  {{ roleLabel(role) }}
-                </span>
+            <a routerLink="/profile" title="My profile" aria-label="My profile" style="display: flex; align-items: center; gap: 0.6rem; text-align: right; white-space: nowrap; color: inherit; text-decoration: none;">
+              <div>
+                <div style="font-size: 0.875rem; font-weight: 600; line-height: 1.3;">{{ auth.currentUser()?.name }} <span aria-hidden="true" style="color: var(--color-text-muted);">›</span></div>
+                <div style="display: flex; gap: 0.25rem; justify-content: flex-end; margin-top: 0.125rem;">
+                  <span *ngIf="primaryRole() as role" class="badge badge-role">
+                    {{ roleLabel(role) }}
+                  </span>
+                </div>
               </div>
+              <img *ngIf="profileApi.photoUrl() as photo; else initialsAvatar" [src]="photo" alt="" width="38" height="38"
+                   (error)="profileApi.photoUrl.set(null)"
+                   style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 1px solid var(--color-border);" />
+              <ng-template #initialsAvatar>
+                <span aria-hidden="true" style="width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-size: 0.8125rem; font-weight: 700; color: #fff; background: var(--color-primary-light);">{{ initials() }}</span>
+              </ng-template>
             </a>
             <button (click)="auth.logout()" class="btn btn-secondary" style="padding: 0.5rem 0.875rem; font-size: 0.8125rem; white-space: nowrap;">
               Sign Out
@@ -93,6 +102,23 @@ const ROLE_LABELS: Record<string, string> = {
 })
 export class HeaderComponent {
   auth = inject(AuthService);
+  readonly profileApi = inject(ProfileApiService);
+
+  constructor() {
+    // Load the photo once per sign-in; the profile page keeps it current after that.
+    effect(() => {
+      if (this.auth.isAuthenticated()) {
+        untracked(() => this.profileApi.get().subscribe({ error: () => this.profileApi.photoUrl.set(null) }));
+      } else {
+        this.profileApi.photoUrl.set(null);
+      }
+    });
+  }
+
+  initials(): string {
+    const name = this.auth.currentUser()?.name ?? '';
+    return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
+  }
 
   primaryRole(): string | null {
     const roles = this.auth.currentUser()?.roles ?? [];

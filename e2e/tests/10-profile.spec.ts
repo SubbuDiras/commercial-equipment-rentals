@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { uniqueEmail } from '../support/env';
+import { tinyPng } from '../support/files';
 import { KeycloakAdmin } from '../support/keycloak-admin';
 import { register, signedInPage } from '../support/ui';
 
@@ -38,6 +39,10 @@ test('a user opens their profile from the header, and edits their name and phone
   await expect(details).toContainText(email);
   await expect(details).toContainText('Not added');
   await expect(details).toContainText('Renter');
+  // A renter sees both account types: Renter (current) and Owner, which leads to the owner application.
+  const accountType = details.getByRole('group', { name: 'Choose account type' });
+  await expect(accountType.locator('[aria-current=true]')).toHaveText('✓ Renter');
+  await expect(accountType.getByRole('link', { name: /Owner · apply to list equipment/ })).toHaveAttribute('href', '/owner/onboarding');
   await expect(page.getByRole('region', { name: 'Equipment owner' }).getByRole('link', { name: 'Become an owner' })).toBeVisible();
   await expect(page.getByRole('link', { name: /Change email or password/ }))
     .toHaveAttribute('href', /\/realms\/marketplace-realm\/account$/);
@@ -68,4 +73,35 @@ test('a user opens their profile from the header, and edits their name and phone
   await expect(page.getByRole('link', { name: 'My profile' })).toContainText('Priya Shah');
   await page.reload();
   await expect(page.getByRole('region', { name: 'Personal details' })).toContainText('Priya Shah');
+});
+
+test('a user adds, changes and removes a profile photo, and the header shows it', async ({ browser }) => {
+  const page = await register(browser, { email: uniqueEmail('photo'), firstName: 'Fay', lastName: 'Photo' });
+  await page.goto('/profile');
+  const details = page.getByRole('region', { name: 'Personal details' });
+  const header = page.getByRole('link', { name: 'My profile' });
+  await expect(details).toContainText('FP'); // initials until there is a photo
+  await expect(header.locator('img')).toHaveCount(0);
+
+  // The photo is framed in a square editor and saved as a small JPEG.
+  await page.getByLabel('Choose profile photo').setInputFiles({ name: 'me.png', mimeType: 'image/png', buffer: tinyPng });
+  const editor = page.getByRole('dialog', { name: 'Edit photo' });
+  await expect(editor).toContainText('frame your face');
+  await expect(editor.getByRole('button', { name: 'Use original' })).toHaveCount(0);
+  await editor.getByRole('button', { name: 'Save photo' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Your photo is saved.' })).toBeVisible();
+  const photo = details.getByRole('img', { name: 'Your profile photo' });
+  await expect(photo).toHaveJSProperty('complete', true);
+  await expect.poll(() => photo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(400);
+  await expect(header.locator('img')).toHaveCount(1);
+
+  // It is still there after a reload, for the header too.
+  await page.reload();
+  await expect(details.getByRole('img', { name: 'Your profile photo' })).toBeVisible();
+  await expect(header.locator('img')).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Remove photo' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Your photo is removed.' })).toBeVisible();
+  await expect(details.getByRole('img', { name: 'Your profile photo' })).toHaveCount(0);
+  await expect(header.locator('img')).toHaveCount(0);
 });

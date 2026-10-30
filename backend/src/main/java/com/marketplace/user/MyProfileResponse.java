@@ -15,6 +15,8 @@ public record MyProfileResponse(
         String phone,
         List<String> roles,
         Instant memberSince,
-        Boolean signInNameUpdated
+        Boolean signInNameUpdated,
+        /** Short-lived link to the profile photo, or null when there is none. */
+        String photoUrl
 ) {
 }

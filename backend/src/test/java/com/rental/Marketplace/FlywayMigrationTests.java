@@ -19,10 +19,12 @@ import com.marketplace.booking.BookingCreateRequest;
 import com.marketplace.booking.BookingService;
 import com.marketplace.booking.DeliveryOption;
 import com.marketplace.dev.DevToolsService;
+import com.marketplace.exception.BadRequestException;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.owner.OwnerOnboardingRequest;
 import com.marketplace.owner.OwnerOnboardingService;
 import com.marketplace.storage.PrivateObjectStorage;
+import org.springframework.mock.web.MockMultipartFile;
 import com.marketplace.user.MyProfileResponse;
 import com.marketplace.user.MyProfileService;
 import com.marketplace.user.MyProfileUpdateRequest;
@@ -42,6 +44,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(
         classes = com.marketplace.MarketplaceApplication.class,
@@ -335,6 +338,34 @@ class FlywayMigrationTests {
         assertThatThrownBy(() -> myProfileService.update(me, new MyProfileUpdateRequest("Meera", "Rao", phone)))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining("phone number is already registered");
+    }
+
+    @Test
+    void usersSetReplaceAndRemoveTheirProfilePhoto() {
+        Jwt me = applicant();
+        when(objectStorage.presignGet(startsWith("users/"), eq(false))).thenReturn("http://storage.test/photo");
+        byte[] jpeg = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 0x10, 'J', 'F', 'I', 'F'};
+
+        assertThat(myProfileService.get(me).photoUrl()).isNull();
+        MyProfileResponse withPhoto = myProfileService.updatePhoto(me,
+                new MockMultipartFile("photo", "me.jpg", "image/jpeg", jpeg));
+        assertThat(withPhoto.photoUrl()).isEqualTo("http://storage.test/photo");
+        String firstKey = jdbcTemplate.queryForObject(
+                "SELECT profile_photo_key FROM users WHERE email = ?", String.class, me.getClaimAsString("email"));
+        assertThat(firstKey).matches("users/[0-9a-f-]{36}/profile-[0-9a-f-]{36}\\.jpeg");
+        verify(objectStorage).put(firstKey, "image/jpeg", jpeg);
+
+        // A replacement deletes the old file; a renamed text file is refused whatever type it claims.
+        myProfileService.updatePhoto(me, new MockMultipartFile("photo", "new.jpg", "image/jpeg", jpeg));
+        verify(objectStorage).delete(firstKey);
+        assertThatThrownBy(() -> myProfileService.updatePhoto(me,
+                new MockMultipartFile("photo", "fake.jpg", "image/jpeg", "not an image".getBytes())))
+                .isInstanceOf(BadRequestException.class);
+
+        assertThat(myProfileService.removePhoto(me).photoUrl()).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_logs WHERE action IN "
+                + "('USER_PHOTO_UPDATED', 'USER_PHOTO_REMOVED') AND actor_user_id = (SELECT id FROM users WHERE email = ?)",
+                Integer.class, me.getClaimAsString("email"))).isEqualTo(3);
     }
 
     private static Jwt applicant() {

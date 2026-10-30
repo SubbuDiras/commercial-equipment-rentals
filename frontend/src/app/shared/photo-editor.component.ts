@@ -1,12 +1,9 @@
-import { Component, ElementRef, OnDestroy, effect, input, output, signal, viewChild } from '@angular/core';
-
-/** Catalogue cards show photos at 4:3; the editor frames photos the same way. */
-const OUTPUT_WIDTH = 1200;
-const OUTPUT_HEIGHT = 900;
+import { Component, ElementRef, OnDestroy, effect, input, output, signal, untracked, viewChild } from '@angular/core';
 
 /**
- * Lets an owner frame a listing photo before it uploads: fit the whole photo (white margins) or fill the frame with
- * zoom and drag, and rotate. The preview matches the catalogue card. Emits a new JPEG, the original file, or nothing.
+ * Frames a photo before it uploads: fit the whole photo (white margins) or fill the frame with zoom and drag, and
+ * rotate. Listing photos are 4:3 like the catalogue card; profile photos are square. Emits a new JPEG, the original
+ * file (when allowed), or nothing.
  */
 @Component({
   selector: 'app-photo-editor',
@@ -15,12 +12,13 @@ const OUTPUT_HEIGHT = 900;
     <div class="dialog-backdrop">
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Edit photo" style="max-width: 640px; width: 100%;">
         <h2>Edit photo</h2>
-        <p class="muted" style="font-size: .875rem;">{{ file().name }}@if (position()) { · photo {{ position() }} }. This is how it will
-          look on the catalogue card.</p>
+        <p class="muted" style="font-size: .875rem;">{{ file().name }}@if (position()) { · photo {{ position() }} }. {{ caption() }}</p>
 
-        <canvas #preview width="640" height="480" aria-label="Photo preview"
+        <canvas #preview width="640" [height]="640 * outputHeight() / outputWidth()" aria-label="Photo preview"
+                [style.aspect-ratio]="outputWidth() + ' / ' + outputHeight()" [style.border-radius]="round() ? '50%' : null"
+                [style.width]="round() ? 'min(100%, 360px)' : null" [style.margin-inline]="round() ? 'auto' : null"
                 [style.cursor]="mode() === 'fill' ? (dragging ? 'grabbing' : 'grab') : 'default'"
-                style="display: block; width: 100%; aspect-ratio: 4 / 3; margin-top: .75rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); touch-action: none;"
+                style="display: block; width: 100%; margin-top: .75rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); touch-action: none;"
                 (pointerdown)="startDrag($event)" (pointermove)="drag($event)" (pointerup)="endDrag($event)" (pointercancel)="endDrag($event)"></canvas>
 
         <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-top: .85rem;">
@@ -44,8 +42,10 @@ const OUTPUT_HEIGHT = 900;
         }
 
         <div class="dialog-actions" style="flex-wrap: wrap;">
-          <button type="button" class="btn btn-secondary" (click)="cancelled.emit()">Skip this photo</button>
-          <button type="button" class="btn btn-secondary" (click)="saved.emit(file())">Use original</button>
+          <button type="button" class="btn btn-secondary" (click)="cancelled.emit()">{{ cancelLabel() }}</button>
+          @if (allowOriginal()) {
+            <button type="button" class="btn btn-secondary" (click)="saved.emit(file())">Use original</button>
+          }
           <button type="button" class="btn btn-primary" (click)="save()" [disabled]="!image() || saving()">
             {{ saving() ? 'Saving…' : 'Save photo' }}
           </button>
@@ -58,6 +58,15 @@ export class PhotoEditorComponent implements OnDestroy {
   readonly file = input.required<File>();
   /** e.g. "2 of 3" when several photos are edited in turn. */
   readonly position = input<string>('');
+  /** The saved size; the preview has the same shape. Listing photos match the 4:3 catalogue card. */
+  readonly outputWidth = input(1200);
+  readonly outputHeight = input(900);
+  readonly caption = input('This is how it will look on the catalogue card.');
+  readonly startMode = input<'fit' | 'fill'>('fit');
+  /** Shows the preview as a circle, the way a profile photo is displayed. */
+  readonly round = input(false);
+  readonly allowOriginal = input(true);
+  readonly cancelLabel = input('Skip this photo');
   readonly saved = output<File>();
   readonly cancelled = output<void>();
 
@@ -141,8 +150,8 @@ export class PhotoEditorComponent implements OnDestroy {
     }
     this.saving.set(true);
     const canvas = document.createElement('canvas');
-    canvas.width = OUTPUT_WIDTH;
-    canvas.height = OUTPUT_HEIGHT;
+    canvas.width = this.outputWidth();
+    canvas.height = this.outputHeight();
     this.draw(canvas, image);
     canvas.toBlob(blob => {
       this.saving.set(false);
@@ -161,7 +170,7 @@ export class PhotoEditorComponent implements OnDestroy {
     }
     this.image.set(null);
     this.loadError.set(false);
-    this.mode.set('fit');
+    this.mode.set(untracked(this.startMode));
     this.zoom.set(1);
     this.rotation.set(0);
     this.offset = { x: 0, y: 0 };
@@ -198,9 +207,11 @@ export class PhotoEditorComponent implements OnDestroy {
       this.offset = { x: 0, y: 0 };
       return;
     }
-    const { width, height } = this.scaled(OUTPUT_WIDTH, OUTPUT_HEIGHT, image);
-    const maxX = Math.max(0, (width - OUTPUT_WIDTH) / 2 / OUTPUT_WIDTH);
-    const maxY = Math.max(0, (height - OUTPUT_HEIGHT) / 2 / OUTPUT_HEIGHT);
+    const frameWidth = this.outputWidth();
+    const frameHeight = this.outputHeight();
+    const { width, height } = this.scaled(frameWidth, frameHeight, image);
+    const maxX = Math.max(0, (width - frameWidth) / 2 / frameWidth);
+    const maxY = Math.max(0, (height - frameHeight) / 2 / frameHeight);
     this.offset = {
       x: Math.min(maxX, Math.max(-maxX, this.offset.x)),
       y: Math.min(maxY, Math.max(-maxY, this.offset.y))

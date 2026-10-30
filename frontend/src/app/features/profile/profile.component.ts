@@ -5,6 +5,7 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 import { ApiError } from '../../core/interceptors/error.interceptor';
 import { invalidFieldsMessage } from '../../shared/form-feedback';
+import { PhotoEditorComponent } from '../../shared/photo-editor.component';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
 import { OwnerApiService, OwnerProfile } from '../owner/owner-api.service';
 import { ownerSetupMessage } from '../owner/owner-setup-notice.component';
@@ -30,7 +31,7 @@ const ROLE_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-profile',
   standalone: true,
-  imports: [DatePipe, ReactiveFormsModule, RouterLink, StatusBadgeComponent],
+  imports: [DatePipe, PhotoEditorComponent, ReactiveFormsModule, RouterLink, StatusBadgeComponent],
   template: `
     <main class="container-wide" style="max-width: 860px; margin: 0 auto; padding-top: 2rem; padding-bottom: 3rem;">
       <h1>My profile</h1>
@@ -52,6 +53,38 @@ const ROLE_LABELS: Record<string, string> = {
             }
           </div>
 
+          <div style="display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; margin-top: 1rem;">
+            @if (me.photoUrl) {
+              <img [src]="me.photoUrl" alt="Your profile photo" width="96" height="96"
+                   style="width: 96px; height: 96px; border-radius: 50%; object-fit: cover; border: 1px solid var(--color-border);" />
+            } @else {
+              <div aria-hidden="true" style="width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; font-size: 2rem; font-weight: 700; color: #fff; background: var(--color-primary-light);">
+                {{ initials(me) }}
+              </div>
+            }
+            <div style="display: grid; gap: .4rem;">
+              <div style="display: flex; gap: .5rem; flex-wrap: wrap;">
+                <label class="btn btn-secondary" [attr.aria-disabled]="photoBusy()">
+                  {{ photoBusy() ? 'Saving photo…' : (me.photoUrl ? 'Change photo' : 'Add photo') }}
+                  <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" aria-label="Choose profile photo"
+                         (change)="choosePhoto($event)" [disabled]="photoBusy()" style="display: none;" />
+                </label>
+                @if (me.photoUrl) {
+                  <button type="button" class="btn btn-secondary" (click)="removePhoto()" [disabled]="photoBusy()">Remove photo</button>
+                }
+              </div>
+              <small class="muted">JPG, PNG or WebP. You can crop it before saving.</small>
+              @if (photoError()) {
+                <small role="alert" style="color: var(--color-danger);">{{ photoError() }}</small>
+              }
+            </div>
+          </div>
+          @if (photoToEdit(); as file) {
+            <app-photo-editor [file]="file" [outputWidth]="400" [outputHeight]="400" [round]="true" startMode="fill"
+                              [allowOriginal]="false" cancelLabel="Cancel" caption="Drag and zoom to frame your face in the circle."
+                              (saved)="savePhoto($event)" (cancelled)="photoToEdit.set(null)" />
+          }
+
           @if (!editing()) {
             <dl class="kv" style="margin-top: 1rem;">
               <dt>Name</dt><dd>{{ me.firstName }} {{ me.lastName }}</dd>
@@ -59,10 +92,28 @@ const ROLE_LABELS: Record<string, string> = {
               <dt>Phone</dt><dd>{{ me.phone || 'Not added' }}</dd>
               <dt>Account type</dt>
               <dd>
-                @for (role of me.roles; track role) {
-                  <span class="badge badge-role" style="margin-right: .35rem;">{{ roleLabel(role) }}</span>
-                } @empty {
-                  <span class="muted">No roles yet</span>
+                @if (canChooseOwner(me)) {
+                  <!-- A renter sees both account types: Renter (theirs now) and Owner (apply for it). -->
+                  <div role="group" aria-label="Choose account type" style="display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;">
+                    <span class="account-type-option" aria-current="true"
+                          style="padding: .35rem .9rem; border-radius: 999px; border: 2px solid var(--color-primary-light); background: var(--color-primary-light); color: #fff; font-weight: 600; font-size: .875rem;">
+                      ✓ Renter
+                    </span>
+                    <a routerLink="/owner/onboarding" class="account-type-option"
+                       style="padding: .35rem .9rem; border-radius: 999px; border: 2px solid var(--color-border); color: var(--color-text-main); font-weight: 600; font-size: .875rem; text-decoration: none;">
+                      Owner
+                      <span style="font-weight: 400; color: var(--color-text-muted);">· {{ ownerOptionHint() }}</span>
+                    </a>
+                  </div>
+                  <small class="muted" style="display: block; margin-top: .35rem;">
+                    Renters hire equipment. Owners also list their own equipment for rent, after a quick verification.
+                  </small>
+                } @else {
+                  @for (role of accountTypes(me); track role) {
+                    <span class="badge badge-role" style="margin-right: .35rem;">{{ roleLabel(role) }}</span>
+                  } @empty {
+                    <span class="muted">No roles yet</span>
+                  }
                 }
               </dd>
               <dt>Member since</dt><dd>{{ me.memberSince | date:'mediumDate' }}</dd>
@@ -157,6 +208,10 @@ export class ProfileComponent implements OnInit {
   readonly formError = signal<string | null>(null);
   readonly notice = signal<string | null>(null);
   readonly noticeIsWarning = signal(false);
+  /** The picked photo while it is being framed in the editor. */
+  readonly photoToEdit = signal<File | null>(null);
+  readonly photoBusy = signal(false);
+  readonly photoError = signal<string | null>(null);
 
   readonly form = this.formBuilder.nonNullable.group({
     firstName: ['', [Validators.required, Validators.maxLength(100)]],
@@ -202,6 +257,86 @@ export class ProfileComponent implements OnInit {
     if (digits !== input.value) {
       this.form.controls.phone.setValue(digits);
     }
+  }
+
+  /**
+   * The roles to show. An owner keeps the renter role underneath (owners can rent from other owners, under My
+   * Bookings), but their account type is just Owner.
+   */
+  accountTypes(profile: MyProfile): string[] {
+    return profile.roles.includes('ROLE_OWNER')
+      ? profile.roles.filter(role => role !== 'ROLE_RENTER')
+      : profile.roles;
+  }
+
+  /** Renters who are not owners yet (and not staff) choose between Renter and Owner here. */
+  canChooseOwner(profile: MyProfile): boolean {
+    return profile.roles.includes('ROLE_RENTER')
+      && !profile.roles.some(role => role === 'ROLE_OWNER' || role === 'ROLE_ADMIN');
+  }
+
+  /** What choosing Owner leads to, from the owner application's state. */
+  ownerOptionHint(): string {
+    switch (this.owner()?.status) {
+      case 'UNDER_REVIEW': return 'application under review';
+      case 'REJECTED': return 'application not approved';
+      case 'VERIFIED': return 'approved, sign in again';
+      default: return 'apply to list equipment';
+    }
+  }
+
+  initials(profile: MyProfile): string {
+    return ((profile.firstName[0] ?? '') + (profile.lastName[0] ?? '')).toUpperCase() || '?';
+  }
+
+  choosePhoto(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) {
+      return;
+    }
+    // The editor shrinks it to a 400×400 JPEG, so a large phone photo is fine here.
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type) && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
+      this.photoError.set('Choose a JPG, PNG or WebP photo.');
+      return;
+    }
+    this.photoError.set(null);
+    this.photoToEdit.set(file);
+  }
+
+  savePhoto(photo: File): void {
+    this.photoToEdit.set(null);
+    this.photoBusy.set(true);
+    this.api.updatePhoto(photo).subscribe({
+      next: profile => {
+        this.profile.update(current => current && { ...current, photoUrl: profile.photoUrl });
+        this.photoBusy.set(false);
+        this.notice.set('Your photo is saved.');
+        this.noticeIsWarning.set(false);
+      },
+      error: (failure: ApiError) => {
+        this.photoBusy.set(false);
+        this.photoError.set(failure.message || 'Your photo could not be saved. Please try again.');
+      }
+    });
+  }
+
+  removePhoto(): void {
+    this.photoBusy.set(true);
+    this.photoError.set(null);
+    this.api.removePhoto().subscribe({
+      next: () => {
+        this.profile.update(current => current && { ...current, photoUrl: null });
+        this.photoBusy.set(false);
+        this.notice.set('Your photo is removed.');
+        this.noticeIsWarning.set(false);
+      },
+      error: (failure: ApiError) => {
+        this.photoBusy.set(false);
+        this.photoError.set(failure.message || 'Your photo could not be removed. Please try again.');
+      }
+    });
   }
 
   cancelEdit(): void {

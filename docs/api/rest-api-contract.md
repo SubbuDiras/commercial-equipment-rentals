@@ -73,8 +73,10 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
 
 #### `GET /api/v1/me` and `PUT /api/v1/me`
 - **Access:** Any signed-in user (renter, owner or admin), for their own profile only.
-- **`GET` response `200 OK`:** `{ "firstName": "Meera", "lastName": "Rao", "email": "meera@example.com", "phone": "+919876543210", "roles": ["ROLE_RENTER"], "memberSince": "2026-10-29T06:00:00Z", "signInNameUpdated": null }`. `phone` is `null` when not added; `roles` are the application roles in the caller's token.
+- **`GET` response `200 OK`:** `{ "firstName": "Meera", "lastName": "Rao", "email": "meera@example.com", "phone": "+919876543210", "roles": ["ROLE_RENTER"], "memberSince": "2026-10-29T06:00:00Z", "signInNameUpdated": null, "photoUrl": null }`. `phone` is `null` when not added; `roles` are the application roles in the caller's token.
 - **`PUT` body:** `{ "firstName": "Meera", "lastName": "Rao-Iyer", "phone": "+919876543210" }`. Names are required (at most 100 characters); `phone` is optional, a 10-digit Indian mobile number with the country code (`+91` then 6–9 and 9 more digits), and an empty string removes it. Email is the sign-in identity and is changed in Keycloak's account page, not here.
+- **`PUT /api/v1/me/photo`** (`multipart/form-data`, part `photo`): sets or replaces the caller's profile photo, for any role. JPEG, PNG or WebP, at most 2 MB; the file's bytes must be one of those image types whatever the declared type (`400` otherwise, `413` when too large). The app crops it to 400×400 in the browser first. Stored privately; the old photo is deleted. Returns the profile with `photoUrl`, a short-lived link.
+- **`DELETE /api/v1/me/photo`**: removes the photo; returns the profile with `photoUrl: null`. Both are audited (`USER_PHOTO_UPDATED`, `USER_PHOTO_REMOVED`).
 - **`PUT` response `200 OK`:** the updated profile. `signInNameUpdated` is `true` when the new name was also copied to Keycloak (new tokens carry it), `false` when the Keycloak service account is unavailable; the marketplace keeps the change either way. Audited as `USER_PROFILE_UPDATED`.
 - **Errors:** `400` for invalid fields; `409` when the phone number belongs to another account.
 

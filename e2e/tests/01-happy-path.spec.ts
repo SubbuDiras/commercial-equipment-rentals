@@ -22,7 +22,7 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await ownerPage.getByLabel('First name').fill(owner.firstName);
   await ownerPage.getByLabel('Last name').fill(owner.lastName);
   await ownerPage.getByLabel('Mobile number').fill(`98${Date.now().toString().slice(-8)}`);
-  await ownerPage.getByLabel('PAN').fill('ABCDE1234F');
+  await ownerPage.getByLabel('PAN', { exact: true }).fill('ABCDE1234F');
   await ownerPage.getByLabel('Aadhaar number').fill('2341 2341 2346');
   await ownerPage.getByLabel('Account holder name').fill(`${owner.firstName} ${owner.lastName}`);
   await ownerPage.getByLabel('Bank name').fill('HDFC Bank');
@@ -37,7 +37,7 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await ownerPage.getByLabel('Choose PAN card file').setInputFiles({ name: 'pan.png', mimeType: 'image/png', buffer: tinyPng });
   await ownerPage.getByLabel('Choose Signature file').setInputFiles({ name: 'signature.png', mimeType: 'image/png', buffer: tinyPng });
   await ownerPage.getByRole('button', { name: 'Submit for verification' }).click();
-  await expect(ownerPage.getByText('Under review')).toBeVisible();
+  await expect(ownerPage.getByText('Under review').first()).toBeVisible();
   for (const name of ['aadhaar.pdf', 'pan.png', 'signature.png']) {
     await expect(ownerPage.getByText(name)).toBeVisible();
   }

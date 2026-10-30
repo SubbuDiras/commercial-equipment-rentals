@@ -124,6 +124,19 @@ public class GlobalExceptionHandler {
         return problemDetail;
     }
 
+    /** Uploads sent through the backend (profile photos) are capped by spring.servlet.multipart.max-file-size. */
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ProblemDetail handleUploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "The file is too large. Choose a photo no larger than 2 MB."
+        );
+        problemDetail.setType(URI.create("https://api.marketplace.com/errors/payload-too-large"));
+        problemDetail.setTitle("Payload Too Large");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
     @ExceptionHandler(ConflictException.class)
     public ProblemDetail handleConflict(ConflictException ex) {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
