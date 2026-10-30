@@ -345,7 +345,7 @@ class FlywayMigrationTests {
     }
 
     private static OwnerOnboardingRequest ownerRequest(String phone) {
-        return new OwnerOnboardingRequest("INDIVIDUAL", "", "", "", "987654321098", "HDFC0001234",
-                "Asha Applicant", "Asha", "Applicant", phone);
+        return new OwnerOnboardingRequest("INDIVIDUAL", "", "", "AAAPA1234A", "9876543210", "HDFC0001234",
+                "Asha Applicant", "Asha", "Applicant", phone, "498765432102", "State Bank of India", "SAVINGS");
     }
 }

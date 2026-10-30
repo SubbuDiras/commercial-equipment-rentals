@@ -8,8 +8,8 @@ import jakarta.validation.constraints.Size;
 public record MyProfileUpdateRequest(
         @NotBlank @Size(max = 100) String firstName,
         @NotBlank @Size(max = 100) String lastName,
-        /** Optional; blank clears it. Digits with an optional leading +, e.g. +919876543210. */
-        @Pattern(regexp = "^$|\\+?[0-9]{8,15}", message = "must be 8 to 15 digits, optionally starting with +")
+        /** Optional; blank clears it. A 10-digit Indian mobile number with the +91 country code, e.g. +919876543210. */
+        @Pattern(regexp = "^$|\\+91[6-9][0-9]{9}", message = "must be a 10-digit Indian mobile number, e.g. +919876543210")
         String phone
 ) {
 }

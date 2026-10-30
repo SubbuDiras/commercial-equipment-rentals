@@ -14,6 +14,8 @@ public record OwnerReviewResponse(
         String businessType,
         String status,
         Instant submittedAt,
+        /** What the applicant submitted, for the admin to check against the documents; absent on review results. */
+        OwnerKycDetails kyc,
         Boolean ownerRoleGranted,
         String warning
 ) {
@@ -25,14 +27,28 @@ public record OwnerReviewResponse(
             String businessName,
             String businessType,
             String status,
+            Instant submittedAt,
+            OwnerKycDetails kyc
+    ) {
+        this(ownerProfileId, firstName, lastName, email, businessName, businessType, status, submittedAt, kyc,
+                null, null);
+    }
+
+    public OwnerReviewResponse(
+            String ownerProfileId,
+            String firstName,
+            String lastName,
+            String email,
+            String businessName,
+            String businessType,
+            String status,
             Instant submittedAt
     ) {
-        this(ownerProfileId, firstName, lastName, email, businessName, businessType, status, submittedAt,
-                null, null);
+        this(ownerProfileId, firstName, lastName, email, businessName, businessType, status, submittedAt, null);
     }
 
     public OwnerReviewResponse withRoleGrant(boolean granted, String warning) {
         return new OwnerReviewResponse(ownerProfileId, firstName, lastName, email, businessName, businessType,
-                status, submittedAt, granted, warning);
+                status, submittedAt, kyc, granted, warning);
     }
 }

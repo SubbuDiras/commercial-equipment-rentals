@@ -10,6 +10,15 @@ import { OwnerApiService, OwnerProfile } from '../owner/owner-api.service';
 import { ownerSetupMessage } from '../owner/owner-setup-notice.component';
 import { MyProfile, ProfileApiService } from './profile-api.service';
 
+/** The 10 mobile digits: drops everything else and a leading 91 country code (from +91…), keeps at most 10. */
+function phoneDigits(value: string): string {
+  let digits = value.replace(/\D/g, '');
+  if (digits.length > 10 && digits.startsWith('91')) {
+    digits = digits.slice(2);
+  }
+  return digits.slice(0, 10);
+}
+
 const ROLE_LABELS: Record<string, string> = {
   ROLE_RENTER: 'Renter',
   ROLE_OWNER: 'Owner',
@@ -69,11 +78,14 @@ const ROLE_LABELS: Record<string, string> = {
                 </label>
               </div>
               <div>
-                <label>Phone
-                  <input formControlName="phone" maxlength="20" inputmode="tel" autocomplete="tel" placeholder="+919876543210"
-                         aria-describedby="phone-hint" class="form-control" />
+                <label>Mobile number
+                  <span style="display: flex; align-items: stretch; gap: .4rem;">
+                    <span aria-hidden="true" class="form-control" style="flex: none; width: auto; background: var(--color-bg-muted);">+91</span>
+                    <input formControlName="phone" inputmode="numeric" autocomplete="tel-national" placeholder="9876543210"
+                           aria-describedby="phone-hint" class="form-control" (input)="keepPhoneDigits($event)" />
+                  </span>
                 </label>
-                <small id="phone-hint" class="muted">8 to 15 digits, with the country code. Leave empty to remove it.</small>
+                <small id="phone-hint" class="muted">10-digit Indian mobile number. Leave empty to remove it.</small>
               </div>
               <div>
                 <label>Email
@@ -149,7 +161,8 @@ export class ProfileComponent implements OnInit {
   readonly form = this.formBuilder.nonNullable.group({
     firstName: ['', [Validators.required, Validators.maxLength(100)]],
     lastName: ['', [Validators.required, Validators.maxLength(100)]],
-    phone: ['', Validators.pattern(/^$|^\+?[0-9]{8,15}$/)]
+    /** The 10 digits after +91; the +91 is added when saving. */
+    phone: ['', Validators.pattern(/^$|^[6-9][0-9]{9}$/)]
   });
 
   ngOnInit(): void {
@@ -176,10 +189,19 @@ export class ProfileComponent implements OnInit {
   }
 
   startEdit(profile: MyProfile): void {
-    this.form.reset({ firstName: profile.firstName, lastName: profile.lastName, phone: profile.phone ?? '' });
+    this.form.reset({ firstName: profile.firstName, lastName: profile.lastName, phone: phoneDigits(profile.phone ?? '') });
     this.formError.set(null);
     this.notice.set(null);
     this.editing.set(true);
+  }
+
+  /** Only digits, at most 10, as they are typed or pasted. */
+  keepPhoneDigits(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const digits = phoneDigits(input.value);
+    if (digits !== input.value) {
+      this.form.controls.phone.setValue(digits);
+    }
   }
 
   cancelEdit(): void {
@@ -189,18 +211,19 @@ export class ProfileComponent implements OnInit {
 
   save(): void {
     const raw = this.form.getRawValue();
-    this.form.patchValue({ firstName: raw.firstName.trim(), lastName: raw.lastName.trim(), phone: raw.phone.replace(/[\s-]/g, '') });
+    this.form.patchValue({ firstName: raw.firstName.trim(), lastName: raw.lastName.trim(), phone: phoneDigits(raw.phone) });
     const invalid = invalidFieldsMessage(this.form, {
       firstName: 'First name',
       lastName: 'Last name',
-      phone: 'Phone (8 to 15 digits, e.g. +919876543210)'
+      phone: 'Mobile number (10 digits starting with 6, 7, 8 or 9, e.g. 9876543210)'
     });
     this.formError.set(invalid);
     if (invalid) {
       return;
     }
     this.saving.set(true);
-    this.api.update(this.form.getRawValue()).subscribe({
+    const value = this.form.getRawValue();
+    this.api.update({ ...value, phone: value.phone ? '+91' + value.phone : '' }).subscribe({
       next: async profile => {
         this.profile.set(profile);
         this.saving.set(false);

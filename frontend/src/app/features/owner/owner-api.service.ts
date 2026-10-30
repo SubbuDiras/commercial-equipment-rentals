@@ -2,6 +2,35 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, firstValueFrom } from 'rxjs';
 
+export const DOCUMENT_TYPES = [
+  { value: 'AADHAAR_CARD', label: 'Aadhaar card' },
+  { value: 'PAN_CARD', label: 'PAN card' },
+  { value: 'SIGNATURE', label: 'Signature' },
+  { value: 'BANK_PROOF', label: 'Bank proof (cancelled cheque or passbook)' },
+  { value: 'IDENTITY', label: 'Other identity proof' },
+  { value: 'ADDRESS_PROOF', label: 'Address proof' },
+  { value: 'BUSINESS_REGISTRATION', label: 'Business registration' },
+  { value: 'GST_CERTIFICATE', label: 'GST certificate' },
+  { value: 'OTHER', label: 'Other' }
+];
+
+export function documentTypeLabel(type: string): string {
+  return DOCUMENT_TYPES.find(candidate => candidate.value === type)?.label ?? type;
+}
+
+/** What the owner submitted. Aadhaar is the last 4 digits only; the owner's own view masks the account number. */
+export interface OwnerKyc {
+  phone: string | null;
+  pan: string | null;
+  gstin: string | null;
+  aadhaarLast4: string | null;
+  bankName: string | null;
+  bankAccountType: string | null;
+  bankAccountNumber: string | null;
+  bankIfsc: string | null;
+  bankAccountHolderName: string | null;
+}
+
 export interface OwnerProfile {
   ownerProfileId: string;
   status: 'UNDER_REVIEW' | 'VERIFIED' | 'REJECTED' | 'SUSPENDED' | string;
@@ -11,6 +40,7 @@ export interface OwnerProfile {
   razorpayAccountLinked: boolean;
   submittedAt: string;
   verifiedAt: string | null;
+  kyc: OwnerKyc;
 }
 
 export interface OwnerDocument {
@@ -33,6 +63,7 @@ export interface OwnerReview {
   businessType: string;
   status: string;
   submittedAt: string;
+  kyc?: OwnerKyc;
   ownerRoleGranted?: boolean;
   warning?: string;
 }
@@ -63,12 +94,12 @@ export class OwnerApiService {
   }
 
   /** Presigns, uploads the file straight to private storage, then marks the document complete. */
-  async uploadDocument(ownerProfileId: string, documentType: string, file: File): Promise<void> {
+  async uploadDocument(ownerProfileId: string, documentType: string, file: File, contentType = file.type): Promise<void> {
     const base = `/api/v1/owner/onboarding/${id(ownerProfileId)}/documents`;
     const upload = await firstValueFrom(this.http.post<DocumentUpload>(base, {
       documentType,
       originalFilename: file.name,
-      contentType: file.type,
+      contentType,
       contentLength: file.size
     }));
     const response = await fetch(upload.uploadUrl, {

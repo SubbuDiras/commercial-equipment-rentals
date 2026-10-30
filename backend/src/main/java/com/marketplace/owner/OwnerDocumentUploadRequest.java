@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record OwnerDocumentUploadRequest(
-        @NotBlank @Pattern(regexp = "IDENTITY|BUSINESS_REGISTRATION|GST_CERTIFICATE|PAN_CARD|BANK_PROOF|ADDRESS_PROOF|OTHER")
+        @NotBlank @Pattern(regexp = "AADHAAR_CARD|SIGNATURE|IDENTITY|BUSINESS_REGISTRATION|GST_CERTIFICATE|PAN_CARD|BANK_PROOF|ADDRESS_PROOF|OTHER")
         String documentType,
         @NotBlank @Size(max = 255) String originalFilename,
         @NotBlank @Pattern(regexp = "application/pdf|image/jpeg|image/png")

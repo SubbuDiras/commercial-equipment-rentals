@@ -74,7 +74,7 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
 #### `GET /api/v1/me` and `PUT /api/v1/me`
 - **Access:** Any signed-in user (renter, owner or admin), for their own profile only.
 - **`GET` response `200 OK`:** `{ "firstName": "Meera", "lastName": "Rao", "email": "meera@example.com", "phone": "+919876543210", "roles": ["ROLE_RENTER"], "memberSince": "2026-10-29T06:00:00Z", "signInNameUpdated": null }`. `phone` is `null` when not added; `roles` are the application roles in the caller's token.
-- **`PUT` body:** `{ "firstName": "Meera", "lastName": "Rao-Iyer", "phone": "+919876543210" }`. Names are required (at most 100 characters); `phone` is optional, 8 to 15 digits with an optional leading `+`, and an empty string removes it. Email is the sign-in identity and is changed in Keycloak's account page, not here.
+- **`PUT` body:** `{ "firstName": "Meera", "lastName": "Rao-Iyer", "phone": "+919876543210" }`. Names are required (at most 100 characters); `phone` is optional, a 10-digit Indian mobile number with the country code (`+91` then 6–9 and 9 more digits), and an empty string removes it. Email is the sign-in identity and is changed in Keycloak's account page, not here.
 - **`PUT` response `200 OK`:** the updated profile. `signInNameUpdated` is `true` when the new name was also copied to Keycloak (new tokens carry it), `false` when the Keycloak service account is unavailable; the marketplace keeps the change either way. Audited as `USER_PROFILE_UPDATED`.
 - **Errors:** `400` for invalid fields; `409` when the phone number belongs to another account.
 
@@ -92,15 +92,19 @@ All APIs follow the **REST architectural style**, exchange data formatted as JSO
   "companyName": "Hyderabad Tool Rentals",
   "gstin": "36ABCDE1234F1Z5",
   "pan": "ABCDE1234F",
-  "bankAccountNumber": "987654321098",
+  "bankAccountNumber": "9876543210",
   "bankIfsc": "HDFC0001234",
   "bankAccountHolderName": "Hyderabad Tool Rentals",
   "firstName": "Suresh",
   "lastName": "Patel",
-  "phone": "+919876543210"
+  "phone": "+919876543210",
+  "aadhaarNumber": "234123412346",
+  "bankName": "HDFC Bank",
+  "bankAccountType": "CURRENT"
 }
 ```
 - **Response `201 Created`:** Created `OwnerProfileResponse` with status `UNDER_REVIEW`.
+- **Validation:** `aadhaarNumber` is required: 12 digits, not starting with 0 or 1, passing the Verhoeff checksum (`400` otherwise). Only its last 4 digits are stored; the full number is never persisted or logged. `bankName` is required (max 100); `bankAccountType` is `SAVINGS` or `CURRENT`. `pan` is required and must look like ABCDE1234F (5 letters, 4 digits, 1 letter); `bankAccountNumber` must be exactly 10 digits; `phone` must be a 10-digit Indian mobile number with the country code (`+91` then 6–9 and 9 more digits).
 
 The account's `sub` and `email` are taken from the verified Keycloak JWT. Contact name and phone are required in the request because they are not guaranteed to be present in every token. Repeated onboarding for an account with an owner profile returns `409 Conflict`.
 
@@ -117,10 +121,21 @@ The account's `sub` and `email` are taken from the verified Keycloak JWT. Contac
   "rejectionReason": null,
   "razorpayAccountLinked": false,
   "submittedAt": "2026-10-20T09:15:00Z",
-  "verifiedAt": null
+  "verifiedAt": null,
+  "kyc": {
+    "phone": "+919876543210",
+    "pan": "ABCDE1234F",
+    "gstin": "36ABCDE1234F1Z5",
+    "aadhaarLast4": "2346",
+    "bankName": "HDFC Bank",
+    "bankAccountType": "CURRENT",
+    "bankAccountNumber": "••••••3210",
+    "bankIfsc": "HDFC0001234",
+    "bankAccountHolderName": "Hyderabad Tool Rentals"
+  }
 }
 ```
-`status` is one of `UNDER_REVIEW`, `VERIFIED`, `REJECTED`, `SUSPENDED`. `rejectionReason` is set only when `REJECTED`. Bank details are never returned.
+`status` is one of `UNDER_REVIEW`, `VERIFIED`, `REJECTED`, `SUSPENDED`. `rejectionReason` is set only when `REJECTED`. `kyc` echoes what the owner submitted, with the bank account number masked to its last 4 digits; `aadhaarLast4`, `bankName` and `bankAccountType` are `null` for owners who applied before these fields existed. The admin owner list (`GET /api/v1/admin/owners`) returns the same `kyc` object with the full account number, for checking against the bank proof and setting up payouts.
 
 #### `POST /api/v1/owner/onboarding/{ownerProfileId}/documents`
 - **Access:** Authenticated profile owner (`ROLE_RENTER` or `ROLE_OWNER`).

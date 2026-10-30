@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { Api } from '../support/api';
 import { uniqueEmail, users } from '../support/env';
-import { tinyPdf } from '../support/files';
+import { tinyPdf, tinyPng } from '../support/files';
 import { KeycloakAdmin } from '../support/keycloak-admin';
 import {
   confirmInspection, dialog, expectStatus, generateCode, openBooking, register, signInAgain, signedInPage,
@@ -21,14 +21,31 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await ownerPage.getByRole('link', { name: 'Become an Owner' }).click();
   await ownerPage.getByLabel('First name').fill(owner.firstName);
   await ownerPage.getByLabel('Last name').fill(owner.lastName);
-  await ownerPage.getByLabel('Phone').fill(`+9198${Date.now().toString().slice(-8)}`);
+  await ownerPage.getByLabel('Mobile number').fill(`98${Date.now().toString().slice(-8)}`);
+  await ownerPage.getByLabel('PAN').fill('ABCDE1234F');
+  await ownerPage.getByLabel('Aadhaar number').fill('2341 2341 2346');
   await ownerPage.getByLabel('Account holder name').fill(`${owner.firstName} ${owner.lastName}`);
-  await ownerPage.getByLabel('Bank account number').fill('123456789012');
+  await ownerPage.getByLabel('Bank name').fill('HDFC Bank');
+  await ownerPage.getByLabel('Current').check();
+  await ownerPage.getByLabel('Bank account number').fill('1234567890');
+  await ownerPage.getByLabel('Confirm account number').fill('1234567890');
   await ownerPage.getByLabel('IFSC code').fill('HDFC0001234');
+  // Missing documents are named; the files are chosen in the form and upload with it.
+  await ownerPage.getByRole('button', { name: 'Submit for verification' }).click();
+  await expect(ownerPage.getByText('Choose a file for: Aadhaar card, PAN card, Signature.')).toBeVisible();
+  await ownerPage.getByLabel('Choose Aadhaar card file').setInputFiles({ name: 'aadhaar.pdf', mimeType: 'application/pdf', buffer: tinyPdf });
+  await ownerPage.getByLabel('Choose PAN card file').setInputFiles({ name: 'pan.png', mimeType: 'image/png', buffer: tinyPng });
+  await ownerPage.getByLabel('Choose Signature file').setInputFiles({ name: 'signature.png', mimeType: 'image/png', buffer: tinyPng });
   await ownerPage.getByRole('button', { name: 'Submit for verification' }).click();
   await expect(ownerPage.getByText('Under review')).toBeVisible();
-  await ownerPage.locator('input[type=file]').setInputFiles({ name: 'id-proof.pdf', mimeType: 'application/pdf', buffer: tinyPdf });
-  await expect(ownerPage.getByText('id-proof.pdf')).toBeVisible();
+  for (const name of ['aadhaar.pdf', 'pan.png', 'signature.png']) {
+    await expect(ownerPage.getByText(name)).toBeVisible();
+  }
+  // Only the last 4 Aadhaar digits come back; the account number is masked for the owner.
+  const kyc = ownerPage.getByRole('definition');
+  await expect(ownerPage.getByText('XXXX XXXX 2346')).toBeVisible();
+  await expect(kyc.filter({ hasText: '••••••7890 · HDFC0001234' })).toBeVisible();
+  await expect(kyc.filter({ hasText: 'HDFC Bank · Current' })).toBeVisible();
 
   // 2. Admin approves the KYC and sets a fake payout account.
   const adminPage = await signedInPage(browser, users.admin.email, '/admin/owners');

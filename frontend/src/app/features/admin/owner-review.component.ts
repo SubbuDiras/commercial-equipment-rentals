@@ -3,7 +3,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ConfirmDialogComponent } from '../../shared/confirm-dialog.component';
 import { StatusBadgeComponent } from '../../shared/status-badge.component';
-import { OwnerApiService, OwnerDocument, OwnerReview } from '../owner/owner-api.service';
+import { documentTypeLabel, OwnerApiService, OwnerDocument, OwnerReview } from '../owner/owner-api.service';
 
 const TABS = [
   { status: 'UNDER_REVIEW', label: 'Waiting for review' },
@@ -51,6 +51,20 @@ const TABS = [
             <app-status-badge [status]="owner.status" />
           </div>
 
+          @if (owner.kyc; as kyc) {
+            <dl [attr.aria-label]="'KYC details of ' + owner.firstName + ' ' + owner.lastName"
+                style="display: grid; grid-template-columns: minmax(130px, auto) 1fr; gap: .3rem 1rem; margin-top: 1rem; font-size: .9375rem;">
+              <dt class="muted">Phone</dt><dd>{{ kyc.phone || '—' }}</dd>
+              <dt class="muted">Aadhaar</dt><dd>{{ kyc.aadhaarLast4 ? 'XXXX XXXX ' + kyc.aadhaarLast4 : 'Not provided' }}</dd>
+              <dt class="muted">PAN</dt><dd>{{ kyc.pan || '—' }}</dd>
+              <dt class="muted">GSTIN</dt><dd>{{ kyc.gstin || '—' }}</dd>
+              <dt class="muted">Bank</dt><dd>{{ kyc.bankName || 'Not provided' }}{{ kyc.bankAccountType ? ' · ' + (kyc.bankAccountType === 'CURRENT' ? 'Current' : 'Savings') : '' }}</dd>
+              <dt class="muted">Account number</dt><dd>{{ kyc.bankAccountNumber }}</dd>
+              <dt class="muted">IFSC</dt><dd>{{ kyc.bankIfsc }}</dd>
+              <dt class="muted">Account holder</dt><dd>{{ kyc.bankAccountHolderName }}</dd>
+            </dl>
+          }
+
           <div style="margin-top: 1rem;">
             <button type="button" class="btn btn-secondary" (click)="toggleDocuments(owner.ownerProfileId)">
               {{ documents()[owner.ownerProfileId] ? 'Hide documents' : 'View documents' }}
@@ -63,7 +77,7 @@ const TABS = [
             <ul style="margin-top: .75rem; padding-left: 1.25rem;">
               @for (document of list; track document.documentId) {
                 <li style="margin: .35rem 0;">
-                  {{ document.documentType }} · {{ document.originalFilename }} · {{ document.status }}
+                  {{ typeLabel(document.documentType) }} · {{ document.originalFilename }} · {{ document.status }}
                   @if (document.uploadedAt) {
                     <button type="button" class="btn btn-secondary" style="padding: .2rem .6rem; margin-left: .5rem;"
                             (click)="download(owner.ownerProfileId, document)">Download</button>
@@ -115,6 +129,7 @@ export class OwnerReviewComponent implements OnInit {
   readonly tabs = TABS;
   readonly status = signal('UNDER_REVIEW');
   readonly owners = signal<OwnerReview[]>([]);
+  readonly typeLabel = documentTypeLabel;
   readonly documents = signal<Record<string, OwnerDocument[]>>({});
   readonly loading = signal(true);
   readonly saving = signal(false);

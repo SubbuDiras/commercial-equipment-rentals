@@ -45,10 +45,10 @@ test('a user opens their profile from the header, and edits their name and phone
   // Incomplete or wrong details are explained, not silently refused.
   await page.getByRole('button', { name: 'Edit details' }).click();
   await page.getByLabel('First name').fill('');
-  await page.getByLabel('Phone').fill('12ab');
+  await page.getByLabel('Mobile number').fill('12ab');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(details.getByRole('alert')).toHaveText(
-    'Please check the highlighted fields: First name, Phone (8 to 15 digits, e.g. +919876543210).');
+    'Please check the highlighted fields: First name, Mobile number (10 digits starting with 6, 7, 8 or 9, e.g. 9876543210).');
 
   // Cancel leaves everything as it was.
   await page.getByRole('button', { name: 'Cancel' }).click();
@@ -58,7 +58,7 @@ test('a user opens their profile from the header, and edits their name and phone
   await page.getByRole('button', { name: 'Edit details' }).click();
   await page.getByLabel('First name').fill('Priya');
   await page.getByLabel('Last name').fill('Shah');
-  await page.getByLabel('Phone').fill(phone.replace(/(\d{5})$/, ' $1'));
+  await page.getByLabel('Mobile number').fill(phone.replace(/(\d{5})$/, ' $1'));
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Your details are saved' })).toBeVisible();
   await expect(details).toContainText('Priya Shah');

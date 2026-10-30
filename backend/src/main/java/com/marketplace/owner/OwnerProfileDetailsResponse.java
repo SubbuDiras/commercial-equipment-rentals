@@ -10,6 +10,8 @@ public record OwnerProfileDetailsResponse(
         String rejectionReason,
         boolean razorpayAccountLinked,
         Instant submittedAt,
-        Instant verifiedAt
+        Instant verifiedAt,
+        /** The applicant's own KYC details, with the bank account number masked. */
+        OwnerKycDetails kyc
 ) {
 }

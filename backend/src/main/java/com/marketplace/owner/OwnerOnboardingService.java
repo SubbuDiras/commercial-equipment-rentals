@@ -2,6 +2,7 @@ package com.marketplace.owner;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.marketplace.exception.BadRequestException;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
 import com.marketplace.notification.NotificationEvent;
@@ -50,6 +51,9 @@ public class OwnerOnboardingService {
         if (subject == null || subject.isBlank() || email == null || email.isBlank()) {
             throw new ConflictException("The authenticated account must provide a subject and email address.");
         }
+        if (!Aadhaar.isValid(request.aadhaarNumber())) {
+            throw new BadRequestException("This Aadhaar number is not valid. Check the 12 digits on your Aadhaar card.");
+        }
 
         try {
             String userId = findUserId(subject);
@@ -79,17 +83,19 @@ public class OwnerOnboardingService {
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     organizationId, businessName, request.companyName(), emptyToNull(request.gstin()),
-                    emptyToNull(request.pan()), userId);
+                    request.pan(), userId);
 
             String profileId = UUID.randomUUID().toString();
             jdbcTemplate.update("""
                     INSERT INTO owner_profiles
                         (id, user_id, organization_id, business_type, bank_account_number, bank_ifsc,
-                         bank_account_holder_name, verification_status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         bank_account_holder_name, bank_name, bank_account_type, aadhaar_last4, verification_status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     profileId, userId, organizationId, request.businessType(), request.bankAccountNumber(),
-                    request.bankIfsc(), request.bankAccountHolderName(), OwnerVerificationStatus.UNDER_REVIEW.name());
+                    request.bankIfsc(), request.bankAccountHolderName(), request.bankName().trim(),
+                    request.bankAccountType(), Aadhaar.lastFour(request.aadhaarNumber()),
+                    OwnerVerificationStatus.UNDER_REVIEW.name());
 
             writeAudit(userId, "OWNER_ONBOARDING_SUBMITTED", "owner_profiles", profileId,
                     Map.of("businessType", request.businessType(), "status", OwnerVerificationStatus.UNDER_REVIEW.name()));
@@ -105,13 +111,13 @@ public class OwnerOnboardingService {
     public List<OwnerReviewResponse> listForReview(OwnerVerificationStatus status) {
         return jdbcTemplate.query("""
                 SELECT op.id, u.first_name, u.last_name, u.email, o.legal_name, op.business_type,
-                       op.verification_status, op.created_at
+                       op.verification_status, op.created_at, %s
                 FROM owner_profiles op
                 JOIN users u ON u.id = op.user_id
                 LEFT JOIN organizations o ON o.id = op.organization_id
                 WHERE op.verification_status = ?
                 ORDER BY op.created_at ASC
-                """,
+                """.formatted(OwnerKycDetails.COLUMNS),
                 (resultSet, rowNumber) -> mapReview(resultSet),
                 status.name());
     }
@@ -122,11 +128,12 @@ public class OwnerOnboardingService {
                 .orElseThrow(() -> new ResourceNotFoundException("Owner profile not found."));
         OwnerProfileDetailsResponse profile = jdbcTemplate.query("""
                         SELECT op.id, op.verification_status, op.business_type, o.legal_name,
-                               op.rejection_reason, op.razorpay_linked_account_id, op.created_at, op.verified_at
+                               op.rejection_reason, op.razorpay_linked_account_id, op.created_at, op.verified_at, %s
                         FROM owner_profiles op
+                        JOIN users u ON u.id = op.user_id
                         LEFT JOIN organizations o ON o.id = op.organization_id
                         WHERE op.user_id = ?
-                        """,
+                        """.formatted(OwnerKycDetails.COLUMNS),
                 resultSet -> {
                     if (!resultSet.next()) {
                         return null;
@@ -141,7 +148,8 @@ public class OwnerOnboardingService {
                             resultSet.getString("rejection_reason"),
                             linkedAccount != null && !linkedAccount.isBlank(),
                             resultSet.getTimestamp("created_at").toInstant(),
-                            verifiedAt == null ? null : verifiedAt.toInstant());
+                            verifiedAt == null ? null : verifiedAt.toInstant(),
+                            OwnerKycDetails.from(resultSet, true));
                 },
                 userId);
         if (profile == null) {
@@ -238,12 +246,12 @@ public class OwnerOnboardingService {
     private OwnerReviewResponse findReview(String ownerProfileId) {
         OwnerReviewResponse owner = jdbcTemplate.query("""
                         SELECT op.id, u.first_name, u.last_name, u.email, o.legal_name, op.business_type,
-                               op.verification_status, op.created_at
+                               op.verification_status, op.created_at, %s
                         FROM owner_profiles op
                         JOIN users u ON u.id = op.user_id
                         LEFT JOIN organizations o ON o.id = op.organization_id
                         WHERE op.id = ?
-                        """,
+                        """.formatted(OwnerKycDetails.COLUMNS),
                 resultSet -> resultSet.next() ? mapReview(resultSet) : null,
                 ownerProfileId);
         if (owner == null) {
@@ -295,7 +303,8 @@ public class OwnerOnboardingService {
                 resultSet.getString("legal_name"),
                 resultSet.getString("business_type"),
                 resultSet.getString("verification_status"),
-                resultSet.getTimestamp("created_at").toInstant());
+                resultSet.getTimestamp("created_at").toInstant(),
+                OwnerKycDetails.from(resultSet, false));
     }
 
     private static String emptyToNull(String value) {
