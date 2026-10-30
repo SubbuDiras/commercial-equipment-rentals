@@ -8,6 +8,8 @@ public enum BookingAction {
     PAY,
     ACCEPT,
     REJECT,
+    /** Owner delivery: record (or correct) the driver, vehicle and expected arrival. */
+    MARK_OUT_FOR_DELIVERY,
     GENERATE_HANDOVER_OTP,
     UPLOAD_HANDOVER_PHOTOS,
     SUBMIT_HANDOVER,

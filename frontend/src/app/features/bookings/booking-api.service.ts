@@ -46,10 +46,35 @@ export interface Page<T> {
 }
 
 export type BookingAction =
-  | 'PAY' | 'ACCEPT' | 'REJECT'
+  | 'PAY' | 'ACCEPT' | 'REJECT' | 'MARK_OUT_FOR_DELIVERY'
   | 'GENERATE_HANDOVER_OTP' | 'UPLOAD_HANDOVER_PHOTOS' | 'SUBMIT_HANDOVER'
   | 'GENERATE_RETURN_OTP' | 'UPLOAD_RETURN_PHOTOS' | 'SUBMIT_RETURN'
   | 'APPROVE_CONDITION' | 'RAISE_DISPUTE' | 'RESOLVE_DISPUTE' | 'CANCEL' | 'REVIEW';
+
+export interface DeliveryAddress {
+  siteContactName: string;
+  siteContactPhone: string;
+  addressLine: string;
+  city: string;
+  postalCode: string;
+}
+
+export interface Delivery {
+  driverName: string;
+  driverPhone: string;
+  vehicleNumber: string;
+  expectedArrivalAt: string;
+  dispatchedAt: string;
+  updatedAt: string;
+}
+
+export interface DeliveryDispatch {
+  driverName: string;
+  /** +91 followed by the 10-digit mobile number. */
+  driverPhone: string;
+  vehicleNumber: string;
+  expectedArrivalAt: string;
+}
 
 export type InspectionType = 'HANDOVER' | 'RETURN';
 
@@ -105,6 +130,10 @@ export interface BookingDetails extends Booking {
   renterName: string;
   /** Short-lived links, null when there is no photo. */
   photos?: { equipment: string | null; owner: string | null; renter: string | null };
+  /** Owner delivery only: where to deliver, as the renter entered it. */
+  deliveryAddress?: DeliveryAddress | null;
+  /** Owner delivery only: set once the owner has sent the equipment. */
+  delivery?: Delivery | null;
   viewerRole: 'RENTER' | 'OWNER' | 'ADMIN';
   payment: {
     paymentId: string;
@@ -227,6 +256,11 @@ export class BookingApiService {
       params = params.set('status', statuses.join(','));
     }
     return this.http.get<Page<OwnerBookingSummary>>('/api/v1/owner/bookings', { params });
+  }
+
+  /** Owner delivery: records or corrects the driver, vehicle and expected arrival; the renter is emailed. */
+  dispatchDelivery(bookingId: string, dispatch: DeliveryDispatch): Observable<Delivery> {
+    return this.http.put<Delivery>(`/api/v1/owner/bookings/${id(bookingId)}/delivery`, dispatch);
   }
 
   accept(bookingId: string): Observable<Booking> {

@@ -101,6 +101,10 @@ public class NotificationService {
                 yield switch (event.type()) {
                     case BOOKING_REQUESTED -> List.of(mail(event, booking.owner(), model, subjectValues));
                     case BOOKING_ACCEPTED, BOOKING_REJECTED -> List.of(mail(event, booking.renter(), model, subjectValues));
+                    case DELIVERY_DISPATCHED -> {
+                        model.put("expectedArrival", DISPLAY_TIME.format((Instant) event.details().get("expectedArrivalAt")));
+                        yield List.of(mail(event, booking.renter(), model, subjectValues));
+                    }
                     case INSPECTION_OTP -> {
                         // The code goes to the counterpart, who reads it back in person to prove both are present.
                         String requestedBy = String.valueOf(event.details().get("requestedByUserId"));

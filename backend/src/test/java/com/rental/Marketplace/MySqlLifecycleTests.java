@@ -1,5 +1,6 @@
 package com.rental.Marketplace;
 
+import com.marketplace.booking.BookingAction;
 import com.marketplace.booking.BookingCreateRequest;
 import com.marketplace.booking.BookingDetailsResponse;
 import com.marketplace.booking.BookingDetailsService;
@@ -7,10 +8,15 @@ import com.marketplace.booking.BookingService;
 import com.marketplace.booking.BookingStatus;
 import com.marketplace.booking.CancellationResponse;
 import com.marketplace.booking.CancellationService;
+import com.marketplace.booking.DeliveryAddressRequest;
+import com.marketplace.booking.DeliveryDispatchRequest;
 import com.marketplace.booking.DeliveryOption;
+import com.marketplace.booking.DeliveryService;
 import com.marketplace.booking.OwnerBookingSummary;
 import com.marketplace.common.PageResponse;
 import com.marketplace.dev.DevToolsService;
+import com.marketplace.exception.BadRequestException;
+import com.marketplace.exception.ConflictException;
 import com.marketplace.equipment.EquipmentCatalogueService;
 import com.marketplace.owner.OwnerOnboardingService;
 import com.marketplace.payment.FakeCheckoutService;
@@ -55,6 +61,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -102,6 +109,7 @@ class MySqlLifecycleTests {
     @Autowired private DevToolsService devTools;
     @Autowired private BookingService bookingService;
     @Autowired private BookingDetailsService bookingDetailsService;
+    @Autowired private DeliveryService deliveryService;
     @Autowired private PaymentService paymentService;
     @Autowired private FakeCheckoutService fakeCheckout;
     @Autowired private RentalInspectionService inspections;
@@ -133,6 +141,49 @@ class MySqlLifecycleTests {
         DevToolsService.SeedResponse seeded = devTools.seedOwnerListing(owner);
         equipmentId = seeded.equipmentId();
         equipmentTitle = seeded.title();
+    }
+
+    @Test
+    void ownerRecordsTheDeliveryAndTheRenterSeesItUntilHandover() {
+        DeliveryAddressRequest site = new DeliveryAddressRequest("Ravi Kumar", "+919876543210",
+                "Plot 21, Sector 18", "Gurugram", "122015");
+        String bookingId = paidBooking(72, DeliveryOption.OWNER_DELIVERY, site);
+        BookingDetailsResponse confirmed = bookingDetailsService.get(bookingId, owner, List.of());
+        assertThat(confirmed.deliveryAddress()).isEqualTo(site);
+        assertThat(confirmed.delivery()).isNull();
+        assertThat(confirmed.availableActions()).contains(BookingAction.MARK_OUT_FOR_DELIVERY);
+        assertThat(bookingDetailsService.get(bookingId, renter, List.of()).availableActions())
+                .doesNotContain(BookingAction.MARK_OUT_FOR_DELIVERY);
+
+        Instant arrival = Instant.now().plus(70, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MINUTES);
+        DeliveryDispatchRequest dispatch = new DeliveryDispatchRequest("Suresh Driver", "+919812345678", "TS09AB1234", arrival);
+        assertThatThrownBy(() -> deliveryService.dispatch(bookingId, renter, dispatch))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        assertThatThrownBy(() -> deliveryService.dispatch(bookingId, owner, new DeliveryDispatchRequest(
+                "Suresh Driver", "+919812345678", "TS09AB1234", Instant.now().plus(10, ChronoUnit.DAYS))))
+                .isInstanceOf(BadRequestException.class);
+
+        deliveryService.dispatch(bookingId, owner, dispatch);
+        BookingDetailsResponse.Delivery seen = bookingDetailsService.get(bookingId, renter, List.of()).delivery();
+        assertThat(seen).extracting("driverName", "driverPhone", "vehicleNumber", "expectedArrivalAt")
+                .containsExactly("Suresh Driver", "+919812345678", "TS09AB1234", arrival);
+
+        // The owner can correct it (one record, two audit entries) until the handover, then no more.
+        deliveryService.dispatch(bookingId, owner, new DeliveryDispatchRequest("Anil Driver", "+919812345679", "TS09AB1234", arrival));
+        assertThat(bookingDetailsService.get(bookingId, renter, List.of()).delivery().driverName()).isEqualTo("Anil Driver");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_logs WHERE entity_id = ? AND action IN "
+                + "('DELIVERY_DISPATCHED', 'DELIVERY_UPDATED')", Integer.class, bookingId)).isEqualTo(2);
+        devTools.shiftTime(bookingId, -73);
+        inspect(bookingId, InspectionType.HANDOVER);
+        assertThat(bookingDetailsService.get(bookingId, owner, List.of()).availableActions())
+                .doesNotContain(BookingAction.MARK_OUT_FOR_DELIVERY);
+        assertThatThrownBy(() -> deliveryService.dispatch(bookingId, owner, dispatch)).isInstanceOf(ConflictException.class);
+
+        // Pickup bookings have nothing to deliver.
+        String pickup = paidBooking(200);
+        assertThatThrownBy(() -> deliveryService.dispatch(pickup, owner, new DeliveryDispatchRequest(
+                "Suresh Driver", "+919812345678", "TS09AB1234", Instant.now().plus(199, ChronoUnit.HOURS))))
+                .isInstanceOf(ConflictException.class);
     }
 
     @Test
@@ -245,9 +296,13 @@ class MySqlLifecycleTests {
 
     /** Books the seeded listing for two days, starting {@code startInHours} from now; the owner accepts; the renter pays. */
     private String paidBooking(int startInHours) {
+        return paidBooking(startInHours, DeliveryOption.PICKUP, null);
+    }
+
+    private String paidBooking(int startInHours, DeliveryOption option, DeliveryAddressRequest address) {
         Instant start = Instant.now().plus(startInHours, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MINUTES);
         String bookingId = bookingService.create(renter, new BookingCreateRequest(
-                equipmentId, start, start.plus(2, ChronoUnit.DAYS), DeliveryOption.PICKUP, null)).bookingId();
+                equipmentId, start, start.plus(2, ChronoUnit.DAYS), option, address)).bookingId();
         bookingService.accept(bookingId, owner);
         String orderId = paymentService.createOrder(bookingId, renter).razorpayOrderId();
         fakeCheckout.simulate(orderId, SimulatePaymentRequest.Outcome.SUCCESS, renter);

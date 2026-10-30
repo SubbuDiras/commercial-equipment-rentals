@@ -31,8 +31,22 @@ public record BookingDetailsResponse(
         List<ReviewResponse> reviews,
         List<BookingAction> availableActions,
         /** Short-lived links (null when there is no photo): the equipment's cover and each party's profile photo. */
-        Photos photos
+        Photos photos,
+        /** Owner delivery only: where to deliver, as the renter entered it. Null for pickup. */
+        DeliveryAddressRequest deliveryAddress,
+        /** Owner delivery only: the driver and expected arrival, once the owner has sent the equipment. */
+        Delivery delivery
 ) {
+
+    public record Delivery(
+            String driverName,
+            String driverPhone,
+            String vehicleNumber,
+            Instant expectedArrivalAt,
+            Instant dispatchedAt,
+            Instant updatedAt
+    ) {
+    }
 
     public record Photos(String equipment, String owner, String renter) {
     }

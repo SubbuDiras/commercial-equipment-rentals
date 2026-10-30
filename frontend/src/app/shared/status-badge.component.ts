@@ -8,6 +8,8 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
   PAYMENT_FAILED: { label: 'Payment failed', tone: 'danger' },
   CONFIRMED: { label: 'Confirmed', tone: 'success' },
   HANDOVER_PENDING: { label: 'Handover due', tone: 'info' },
+  // Not a booking status: shown while a confirmed owner-delivery booking is on its way.
+  OUT_FOR_DELIVERY: { label: 'Out for delivery', tone: 'info' },
   IN_PROGRESS: { label: 'In progress', tone: 'info' },
   RETURN_PENDING: { label: 'Return due', tone: 'info' },
   RETURNED: { label: 'Returned', tone: 'info' },

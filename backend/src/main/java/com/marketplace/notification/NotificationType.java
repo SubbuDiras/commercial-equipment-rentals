@@ -18,6 +18,7 @@ public enum NotificationType {
     INSPECTION_OTP("inspection-otp", "Your {inspection} code for booking {ref}"),
     DISPUTE_OPENED("dispute-opened", "Damage claim opened on booking {ref}"),
     DISPUTE_RESOLVED("dispute-resolved", "Damage claim on booking {ref} resolved"),
+    DELIVERY_DISPATCHED("delivery-dispatched", "Your equipment for booking {ref} is out for delivery"),
     BOOKING_COMPLETED("booking-completed", "Booking {ref} completed - leave a review");
 
     private final String template;

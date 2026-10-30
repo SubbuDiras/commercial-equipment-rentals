@@ -25,8 +25,18 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
   DISPUTED: { RENTER: 'The owner raised a damage claim. Our team is reviewing it.', OWNER: 'Your claim is with our team for review.' },
   INSPECTION_PASSED: { RENTER: 'Inspection passed. Your deposit refund is being processed.', OWNER: 'Inspection passed. Your payout is being processed.' },
   COMPLETED: { RENTER: 'Completed. Please leave a review.', OWNER: 'Completed. Please leave a review.' },
-  CLOSED: { RENTER: 'This booking is closed.', OWNER: 'This booking is closed.' }
+  CLOSED: { RENTER: 'This booking is closed.', OWNER: 'This booking is closed.' },
+  OUT_FOR_DELIVERY: {
+    RENTER: 'Your equipment is on its way. When it arrives, do the handover inspection with the owner or driver.',
+    OWNER: 'On its way to the renter. When it arrives, do the handover inspection together.'
+  }
 };
+
+/** An ISO time as the value a datetime-local input expects, in the viewer's time zone. */
+function toLocalInput(iso: string): string {
+  const date = new Date(iso);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
 
 @Component({
   selector: 'app-booking-details',
@@ -63,7 +73,7 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
               <div class="muted">Booking {{ b.bookingReference }}</div>
             </div>
           </div>
-          <app-status-badge [status]="b.status" />
+          <app-status-badge [status]="displayStatus(b)" />
         </header>
         @if (nextStep()) {
           <div class="alert alert-info">{{ nextStep() }}</div>
@@ -140,6 +150,86 @@ const NEXT_STEP: Record<string, { RENTER: string; OWNER: string }> = {
               }
               <button type="submit" class="btn btn-primary" [disabled]="busy()" style="justify-self: start;">Submit review</button>
             </form>
+          </section>
+        }
+
+        @if (b.deliveryOption === 'OWNER_DELIVERY') {
+          <section class="card" aria-labelledby="delivery-heading" style="padding: 1.25rem; margin-top: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+              <h2 id="delivery-heading" style="font-size: 1.1rem;">Delivery</h2>
+              @if (has('MARK_OUT_FOR_DELIVERY') && !deliveryFormOpen()) {
+                <button type="button" class="btn" [class.btn-primary]="!b.delivery" [class.btn-secondary]="!!b.delivery"
+                        (click)="openDeliveryForm(b)">
+                  {{ b.delivery ? 'Update delivery details' : 'Mark as out for delivery' }}
+                </button>
+              }
+            </div>
+            <div class="grid grid-cols-2" style="gap: 1.25rem; margin-top: .75rem;">
+              <div>
+                <h3 style="font-size: .9375rem; margin-bottom: .35rem;">Deliver to</h3>
+                @if (b.deliveryAddress; as site) {
+                  <dl class="kv">
+                    <dt>Site contact</dt><dd>{{ site.siteContactName }}</dd>
+                    <dt>Contact phone</dt><dd><a [href]="'tel:' + site.siteContactPhone">{{ site.siteContactPhone }}</a></dd>
+                    <dt>Address</dt><dd>{{ site.addressLine }}, {{ site.city }} {{ site.postalCode }}</dd>
+                  </dl>
+                } @else {
+                  <p class="muted">No delivery address was given.</p>
+                }
+              </div>
+              <div>
+                @if (b.delivery; as delivery) {
+                  <h3 style="font-size: .9375rem; margin-bottom: .35rem;">Out for delivery</h3>
+                  <dl class="kv">
+                    <dt>Driver</dt><dd>{{ delivery.driverName }}</dd>
+                    <dt>Driver phone</dt><dd><a [href]="'tel:' + delivery.driverPhone">{{ delivery.driverPhone }}</a></dd>
+                    <dt>Vehicle</dt><dd>{{ delivery.vehicleNumber }}</dd>
+                    <dt>Expected arrival</dt><dd><strong>{{ delivery.expectedArrivalAt | date:'medium' }}</strong></dd>
+                    <dt>Sent</dt>
+                    <dd>{{ delivery.dispatchedAt | date:'short' }}@if (delivery.updatedAt !== delivery.dispatchedAt) { · updated {{ delivery.updatedAt | date:'short' }} }</dd>
+                  </dl>
+                } @else if (b.viewerRole === 'RENTER') {
+                  <p class="muted">The owner has not sent the equipment yet. When they do, you will see the driver, vehicle and
+                    expected arrival here, and get an email.</p>
+                } @else if (has('MARK_OUT_FOR_DELIVERY')) {
+                  <p class="muted">When the equipment leaves, mark it as out for delivery so the renter knows who is coming and when.</p>
+                }
+              </div>
+            </div>
+
+            @if (deliveryFormOpen()) {
+              <form [formGroup]="deliveryForm" (ngSubmit)="saveDelivery(b)" novalidate
+                    style="display: grid; gap: .85rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+                <div class="grid grid-cols-2" style="gap: 1rem;">
+                  <label>Driver name
+                    <input formControlName="driverName" maxlength="100" class="form-control" />
+                  </label>
+                  <label>Driver mobile number
+                    <span style="display: flex; gap: .4rem;">
+                      <span aria-hidden="true" class="form-control" style="flex: none; width: auto; background: var(--color-bg-muted);">+91</span>
+                      <input formControlName="driverPhone" inputmode="numeric" placeholder="9876543210" class="form-control"
+                             (input)="keepPhoneDigits($event)" />
+                    </span>
+                  </label>
+                  <label>Vehicle number
+                    <input formControlName="vehicleNumber" maxlength="13" placeholder="TS09AB1234" class="form-control"
+                           style="text-transform: uppercase;" />
+                  </label>
+                  <label>Expected arrival
+                    <input type="datetime-local" formControlName="expectedArrivalAt" class="form-control" />
+                  </label>
+                </div>
+                @if (deliveryError()) {
+                  <div class="alert alert-error" role="alert">{{ deliveryError() }}</div>
+                }
+                <div style="display: flex; gap: .75rem;">
+                  <button type="submit" class="btn btn-primary" [disabled]="busy()">
+                    {{ b.delivery ? 'Save delivery details' : 'Send to renter' }}
+                  </button>
+                  <button type="button" class="btn btn-secondary" (click)="deliveryFormOpen.set(false)" [disabled]="busy()">Cancel</button>
+                </div>
+              </form>
+            }
           </section>
         }
 
@@ -324,10 +414,88 @@ export class BookingDetailsComponent implements OnInit {
     rating: [null as number | null, [Validators.required, Validators.min(1), Validators.max(5)]],
     comments: ['', Validators.maxLength(2000)]
   });
+  readonly deliveryFormOpen = signal(false);
+  readonly deliveryError = signal<string | null>(null);
+  /** The backend applies the same rules: a 10-digit mobile after +91, and an Indian registration number. */
+  readonly deliveryForm = this.formBuilder.nonNullable.group({
+    driverName: ['', [Validators.required, Validators.maxLength(100)]],
+    driverPhone: ['', [Validators.required, Validators.pattern(/^[6-9][0-9]{9}$/)]],
+    vehicleNumber: ['', [Validators.required,
+      Validators.pattern(/^([A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}|[0-9]{2}BH[0-9]{4}[A-Z]{1,2})$/i)]],
+    expectedArrivalAt: ['', Validators.required]
+  });
+
+  /** While a confirmed delivery booking is on its way, say so instead of "Confirmed" or "Handover due". */
+  displayStatus(b: BookingDetails): string {
+    return b.delivery && (b.status === 'CONFIRMED' || b.status === 'HANDOVER_PENDING') ? 'OUT_FOR_DELIVERY' : b.status;
+  }
+
+  openDeliveryForm(b: BookingDetails): void {
+    const current = b.delivery;
+    this.deliveryForm.reset({
+      driverName: current?.driverName ?? '',
+      driverPhone: current?.driverPhone.replace(/^\+91/, '') ?? '',
+      vehicleNumber: current?.vehicleNumber ?? '',
+      expectedArrivalAt: current ? toLocalInput(current.expectedArrivalAt) : ''
+    });
+    this.deliveryError.set(null);
+    this.deliveryFormOpen.set(true);
+  }
+
+  /** Only digits, at most 10; a pasted +91 or 91 is dropped. */
+  keepPhoneDigits(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    let digits = input.value.replace(/\D/g, '');
+    if (digits.length > 10 && digits.startsWith('91')) {
+      digits = digits.slice(2);
+    }
+    digits = digits.slice(0, 10);
+    if (digits !== input.value) {
+      this.deliveryForm.controls.driverPhone.setValue(digits);
+    }
+  }
+
+  saveDelivery(b: BookingDetails): void {
+    const raw = this.deliveryForm.getRawValue();
+    this.deliveryForm.patchValue({
+      driverName: raw.driverName.trim(),
+      vehicleNumber: raw.vehicleNumber.replace(/[\s-]/g, '').toUpperCase()
+    });
+    const invalid = invalidFieldsMessage(this.deliveryForm, {
+      driverName: 'Driver name',
+      driverPhone: 'Driver mobile number (10 digits, e.g. 9876543210)',
+      vehicleNumber: 'Vehicle number (e.g. TS09AB1234)',
+      expectedArrivalAt: 'Expected arrival'
+    });
+    this.deliveryError.set(invalid);
+    if (invalid) {
+      return;
+    }
+    const value = this.deliveryForm.getRawValue();
+    this.busy.set(true);
+    this.api.dispatchDelivery(b.bookingId, {
+      driverName: value.driverName,
+      driverPhone: '+91' + value.driverPhone,
+      vehicleNumber: value.vehicleNumber,
+      expectedArrivalAt: new Date(value.expectedArrivalAt).toISOString()
+    }).subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.deliveryFormOpen.set(false);
+        this.notice.set(b.delivery ? 'Delivery details updated. The renter has been emailed.'
+          : 'Marked as out for delivery. The renter has been emailed the driver details.');
+        this.load();
+      },
+      error: (failure: Error) => {
+        this.busy.set(false);
+        this.deliveryError.set(failure.message || 'The delivery details could not be saved. Please try again.');
+      }
+    });
+  }
 
   readonly nextStep = computed(() => {
     const b = this.booking();
-    return b && b.viewerRole !== 'ADMIN' ? NEXT_STEP[b.status]?.[b.viewerRole] ?? null : null;
+    return b && b.viewerRole !== 'ADMIN' ? NEXT_STEP[this.displayStatus(b)]?.[b.viewerRole] ?? null : null;
   });
 
   readonly inspectionType = computed<InspectionType | null>(() => {

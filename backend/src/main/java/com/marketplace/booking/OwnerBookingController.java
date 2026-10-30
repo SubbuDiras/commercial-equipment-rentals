@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,10 +28,13 @@ public class OwnerBookingController {
 
     private final BookingService bookingService;
     private final CancellationService cancellationService;
+    private final DeliveryService deliveryService;
 
-    public OwnerBookingController(BookingService bookingService, CancellationService cancellationService) {
+    public OwnerBookingController(BookingService bookingService, CancellationService cancellationService,
+                                  DeliveryService deliveryService) {
         this.bookingService = bookingService;
         this.cancellationService = cancellationService;
+        this.deliveryService = deliveryService;
     }
 
     @PostMapping("/{bookingId}/cancel")
@@ -67,5 +71,15 @@ public class OwnerBookingController {
             @Valid @RequestBody BookingRejectionRequest request
     ) {
         return bookingService.reject(bookingId, jwt, request.reason());
+    }
+
+    /** Owner delivery: records (or corrects) the driver, vehicle and expected arrival; the renter is emailed. */
+    @PutMapping("/{bookingId}/delivery")
+    public BookingDetailsResponse.Delivery dispatch(
+            @PathVariable String bookingId,
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody DeliveryDispatchRequest request
+    ) {
+        return deliveryService.dispatch(bookingId, jwt, request);
     }
 }

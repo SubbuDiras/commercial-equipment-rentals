@@ -46,7 +46,8 @@ export class Api {
   // Bookings
 
   /** Requests a pickup booking starting `startInHours` from now and lasting `days`. */
-  async requestBooking(equipmentId: string, startInHours: number, days = 2): Promise<string> {
+  /** Pickup by default; pass a site address for owner delivery. */
+  async requestBooking(equipmentId: string, startInHours: number, days = 2, deliveryAddress?: Json): Promise<string> {
     const start = new Date(Date.now() + startInHours * 3_600_000);
     start.setSeconds(0, 0);
     const end = new Date(start.getTime() + days * 86_400_000);
@@ -54,7 +55,8 @@ export class Api {
       equipmentId,
       startTime: start.toISOString(),
       endTime: end.toISOString(),
-      deliveryOption: 'PICKUP'
+      deliveryOption: deliveryAddress ? 'OWNER_DELIVERY' : 'PICKUP',
+      deliveryAddress
     });
     return booking.bookingId;
   }

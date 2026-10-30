@@ -41,6 +41,7 @@ public class BookingDetailsService {
     private final PaymentService paymentService;
     private final ReviewService reviewService;
     private final PrivateObjectStorage objectStorage;
+    private final DeliveryService deliveryService;
 
     public BookingDetailsService(
             JdbcTemplate jdbcTemplate,
@@ -48,7 +49,8 @@ public class BookingDetailsService {
             InspectionReportReader inspectionReportReader,
             PaymentService paymentService,
             ReviewService reviewService,
-            PrivateObjectStorage objectStorage
+            PrivateObjectStorage objectStorage,
+            DeliveryService deliveryService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.userProfileService = userProfileService;
@@ -56,6 +58,7 @@ public class BookingDetailsService {
         this.paymentService = paymentService;
         this.reviewService = reviewService;
         this.objectStorage = objectStorage;
+        this.deliveryService = deliveryService;
     }
 
     @Transactional(readOnly = true)
@@ -113,7 +116,9 @@ public class BookingDetailsService {
                         : null,
                 reviews,
                 actions,
-                photos(base.equipmentId(), booking.ownerUserId(), booking.renterUserId()));
+                photos(base.equipmentId(), booking.ownerUserId(), booking.renterUserId()),
+                deliveryService.address(bookingId),
+                deliveryService.find(bookingId));
     }
 
     /**
@@ -173,6 +178,10 @@ public class BookingDetailsService {
         if ("OWNER".equals(viewerRole) && status == BookingStatus.REQUESTED && holdActive && booking.ownerVerified()) {
             actions.add(BookingAction.ACCEPT);
             actions.add(BookingAction.REJECT);
+        }
+        if ("OWNER".equals(viewerRole) && DeliveryService.DISPATCHABLE.contains(status)
+                && DeliveryOption.OWNER_DELIVERY.name().equals(base.deliveryOption())) {
+            actions.add(BookingAction.MARK_OUT_FOR_DELIVERY);
         }
         if (("RENTER".equals(viewerRole) || "OWNER".equals(viewerRole)) && activeInspection != null) {
             Instant opensAt = activeInspection == InspectionType.HANDOVER ? base.startTime() : base.endTime();

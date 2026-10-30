@@ -34,6 +34,7 @@ final class RentalLifecycleSchema {
         jdbcTemplate.execute("DROP TABLE IF EXISTS payments");
         jdbcTemplate.execute("DROP TABLE IF EXISTS booking_status_history");
         jdbcTemplate.execute("DROP TABLE IF EXISTS audit_logs");
+        jdbcTemplate.execute("DROP TABLE IF EXISTS booking_deliveries");
         jdbcTemplate.execute("DROP TABLE IF EXISTS bookings");
         jdbcTemplate.execute("DROP TABLE IF EXISTS equipment_images");
         jdbcTemplate.execute("DROP TABLE IF EXISTS equipment");
@@ -103,11 +104,24 @@ final class RentalLifecycleSchema {
                     owner_commission_amount DECIMAL(12,2),
                     security_deposit_amount DECIMAL(12,2) NOT NULL,
                     delivery_option VARCHAR(30) NOT NULL DEFAULT 'PICKUP',
+                    delivery_address_json VARCHAR(2000),
                     delivery_charge DECIMAL(12,2) NOT NULL DEFAULT 0.00,
                     platform_fee_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
                     tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
                     created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
                     updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE booking_deliveries (
+                    booking_id CHAR(36) PRIMARY KEY,
+                    driver_name VARCHAR(100) NOT NULL,
+                    driver_phone VARCHAR(20) NOT NULL,
+                    vehicle_number VARCHAR(20) NOT NULL,
+                    expected_arrival_at TIMESTAMP(6) NOT NULL,
+                    dispatched_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    dispatched_by_user_id CHAR(36) NOT NULL,
+                    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                 )
                 """);
         jdbcTemplate.execute("""
