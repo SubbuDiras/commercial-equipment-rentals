@@ -122,12 +122,19 @@ jobs:
             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadminpassword \
             -e MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:4200 \
             bitnamilegacy/minio:2024.8.3-debian-12-r0
-          npx --yes wait-on@8.0.3 -t 120000 http://localhost:9000/minio/health/ready
-          docker exec minio bash -ec '
-            mc alias set local http://localhost:9000 minioadmin minioadminpassword
-            mc mb local/marketplace-media --ignore-existing
-            mc mb local/marketplace-private --ignore-existing
-            mc anonymous set download local/marketplace-media/public'
+          # MinIO can report ready a moment before mc commands succeed, so retry the bucket setup.
+          for attempt in $(seq 1 30); do
+            if docker exec minio bash -ec '
+                mc alias set local http://localhost:9000 minioadmin minioadminpassword
+                mc mb local/marketplace-media --ignore-existing
+                mc mb local/marketplace-private --ignore-existing
+                mc anonymous set download local/marketplace-media/public'; then
+              echo "Buckets ready (attempt $attempt)"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs --tail 50 minio
+          exit 1
 
       - uses: actions/setup-java@v4
         with:
