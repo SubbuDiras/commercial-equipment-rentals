@@ -346,7 +346,7 @@ public class BookingService {
                   AND end_time > ?
                   AND (
                       status IN (%s)
-                      OR (status IN (%s) AND hold_expires_at > CURRENT_TIMESTAMP(6))
+                      OR (status IN (%s) AND hold_expires_at > ?)
                   )
                 """.formatted(
                 String.join(",", PERMANENT_INVENTORY_BLOCKING_STATUSES.stream().map(status -> "?").toList()),
@@ -357,6 +357,8 @@ public class BookingService {
         parameters.add(Timestamp.from(startTime));
         PERMANENT_INVENTORY_BLOCKING_STATUSES.forEach(status -> parameters.add(status.name()));
         HOLD_INVENTORY_BLOCKING_STATUSES.forEach(status -> parameters.add(status.name()));
+        // Holds are stored in UTC; compare with the app's clock, not the database session's time zone.
+        parameters.add(Timestamp.from(Instant.now()));
         Integer conflicts = jdbcTemplate.queryForObject(availabilitySql, Integer.class, parameters.toArray());
         return conflicts != null && conflicts > 0;
     }

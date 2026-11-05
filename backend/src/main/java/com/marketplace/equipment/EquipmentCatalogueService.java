@@ -149,12 +149,14 @@ public class EquipmentCatalogueService {
                                b.status IN ('CONFIRMED', 'HANDOVER_PENDING', 'IN_PROGRESS',
                                             'RETURN_PENDING', 'RETURNED', 'DISPUTED', 'INSPECTION_PASSED')
                                OR (b.status IN ('REQUESTED', 'PAYMENT_PENDING', 'PAYMENT_FAILED')
-                               AND b.hold_expires_at > CURRENT_TIMESTAMP(6))
+                               AND b.hold_expires_at > ?)
                            )
                      )
                     """);
             arguments.add(Timestamp.from(endTime));
             arguments.add(Timestamp.from(startTime));
+            // Holds are stored in UTC; compare with the app's clock, not the database session's time zone.
+            arguments.add(Timestamp.from(Instant.now()));
         }
 
         Long total = jdbcTemplate.queryForObject("""
