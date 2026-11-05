@@ -3,10 +3,15 @@ package com.marketplace.equipment;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.marketplace.notification.NotificationEvent;
+import com.marketplace.notification.NotificationType;
+import org.springframework.context.ApplicationEventPublisher;
 import com.marketplace.exception.BadRequestException;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.storage.PrivateObjectStorage;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -22,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class EquipmentCatalogueService {
@@ -30,10 +36,19 @@ public class EquipmentCatalogueService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher events;
+    private final PrivateObjectStorage objectStorage;
 
-    public EquipmentCatalogueService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public EquipmentCatalogueService(
+            JdbcTemplate jdbcTemplate,
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher events,
+            PrivateObjectStorage objectStorage
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.events = events;
+        this.objectStorage = objectStorage;
     }
 
     @Transactional(readOnly = true)
@@ -171,7 +186,60 @@ public class EquipmentCatalogueService {
                         """,
                 this::mapPublicListing, pageArguments.toArray());
         int totalPages = (int) ((totalElements + size - 1) / size);
-        return new EquipmentListingPage(content, page, size, totalElements, totalPages);
+        return new EquipmentListingPage(withPrimaryImages(content), page, size, totalElements, totalPages);
+    }
+
+    /**
+     * Adds each listing's cover photo (the primary image, else the first uploaded one) with one query per page. The
+     * link is the stable {@link #coverPhotoUrl} address, not a storage link: storage links expire after 15 minutes,
+     * and the catalogue loads card photos lazily, so a page left open would show broken photos as you scroll. The
+     * image id in the link changes when the cover does, so browsers never keep showing an old cover.
+     */
+    private List<EquipmentListingResponse> withPrimaryImages(List<EquipmentListingResponse> listings) {
+        if (listings.isEmpty()) {
+            return listings;
+        }
+        String placeholders = listings.stream().map(ignored -> "?").collect(Collectors.joining(", "));
+        Map<String, String> coverImageIds = new LinkedHashMap<>();
+        jdbcTemplate.query("""
+                        SELECT equipment_id, id
+                        FROM equipment_images
+                        WHERE equipment_id IN (%s) AND uploaded_at IS NOT NULL
+                        ORDER BY is_primary DESC, display_order, id
+                        """.formatted(placeholders),
+                (RowCallbackHandler) resultSet -> coverImageIds.putIfAbsent(
+                        resultSet.getString("equipment_id"), resultSet.getString("id")),
+                listings.stream().map(EquipmentListingResponse::id).toArray());
+        return listings.stream()
+                .map(listing -> {
+                    String imageId = coverImageIds.get(listing.id());
+                    return imageId == null ? listing : listing.withPrimaryImageUrl(
+                            "/api/v1/equipment/" + listing.id() + "/cover?v=" + imageId);
+                })
+                .toList();
+    }
+
+    /**
+     * A fresh storage link to a live listing's cover photo, for the catalogue's stable cover address. Drafts and
+     * listings of unverified owners are not public, so their photos are not either.
+     */
+    @Transactional(readOnly = true)
+    public String coverPhotoUrl(String equipmentId) {
+        List<String> keys = jdbcTemplate.queryForList("""
+                        SELECT i.storage_object_key
+                        FROM equipment_images i
+                        JOIN equipment e ON e.id = i.equipment_id
+                        JOIN owner_profiles op ON op.id = e.owner_id
+                        WHERE i.equipment_id = ? AND i.uploaded_at IS NOT NULL
+                          AND e.status = 'ACTIVE' AND op.verification_status = 'VERIFIED'
+                        ORDER BY i.is_primary DESC, i.display_order, i.id
+                        LIMIT 1
+                        """,
+                String.class, equipmentId);
+        if (keys.isEmpty()) {
+            throw new ResourceNotFoundException("This listing has no public photo.");
+        }
+        return objectStorage.presignGet(keys.get(0), false);
     }
 
     @Transactional(readOnly = true)
@@ -189,7 +257,21 @@ public class EquipmentCatalogueService {
         if (rows.isEmpty()) {
             throw new ResourceNotFoundException("Active equipment listing not found.");
         }
-        return rows.get(0);
+        // Only renters' reviews rate the equipment; the owner's review of the renter shares the equipment id.
+        return jdbcTemplate.query("""
+                        SELECT COUNT(*) AS review_count, COALESCE(SUM(r.rating), 0) AS rating_total
+                        FROM reviews r
+                        JOIN bookings b ON b.id = r.booking_id
+                        WHERE r.equipment_id = ? AND r.reviewer_user_id = b.renter_user_id AND r.is_published = TRUE
+                        """,
+                resultSet -> {
+                    resultSet.next();
+                    int count = resultSet.getInt("review_count");
+                    BigDecimal average = count == 0 ? null : BigDecimal.valueOf(resultSet.getLong("rating_total"))
+                            .divide(BigDecimal.valueOf(count), 2, java.math.RoundingMode.HALF_UP);
+                    return rows.get(0).withRating(average, count);
+                },
+                equipmentId);
     }
 
     @Transactional
@@ -308,6 +390,9 @@ public class EquipmentCatalogueService {
         writeAudit(adminJwt, approve ? "EQUIPMENT_LISTING_APPROVED" : "EQUIPMENT_LISTING_REJECTED",
                 equipmentId, approve ? Map.of("status", targetStatus)
                         : Map.of("status", targetStatus, "reason", reason.trim()));
+        events.publishEvent(approve
+                ? NotificationEvent.of(NotificationType.LISTING_APPROVED, equipmentId)
+                : NotificationEvent.of(NotificationType.LISTING_REJECTED, equipmentId, Map.of("reason", reason.trim())));
         return findAnyListing(equipmentId);
     }
 
@@ -452,7 +537,10 @@ public class EquipmentCatalogueService {
                 resultSet.getBigDecimal("latitude"),
                 resultSet.getBigDecimal("longitude"),
                 resultSet.getString("status"),
-                createdAt == null ? null : createdAt.toInstant());
+                createdAt == null ? null : createdAt.toInstant(),
+                null,
+                null,
+                null);
     }
 
     private EquipmentListingResponse mapPublicListing(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -482,7 +570,10 @@ public class EquipmentCatalogueService {
                 null,
                 null,
                 listing.status(),
-                listing.createdAt());
+                listing.createdAt(),
+                null,
+                null,
+                null);
     }
 
     private static String emptyToNull(String value) {

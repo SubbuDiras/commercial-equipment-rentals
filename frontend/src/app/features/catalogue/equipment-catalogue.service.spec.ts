@@ -19,14 +19,14 @@ describe('EquipmentCatalogueService', () => {
 
   it('sends only supplied search filters and pagination to the public catalogue', () => {
     let result: unknown;
-    service.search({ categoryId: 'category-1', city: 'Bengaluru', page: 2, size: 12 }).subscribe(value => {
+    service.search({ categoryId: 'category-1', city: 'Hyderabad', page: 2, size: 12 }).subscribe(value => {
       result = value;
     });
 
     const request = http.expectOne(request =>
       request.url === '/api/v1/equipment' &&
       request.params.get('categoryId') === 'category-1' &&
-      request.params.get('city') === 'Bengaluru' &&
+      request.params.get('city') === 'Hyderabad' &&
       request.params.get('page') === '2' &&
       request.params.get('size') === '12' &&
       !request.params.has('minRate') &&

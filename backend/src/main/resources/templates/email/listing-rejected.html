@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>Your listing <strong th:text="${equipmentTitle}">title</strong> was not approved.</p>
+<p th:if="${reason}">Reason: <em th:text="${reason}">reason</em></p>
+<p>You can edit the listing and submit it again for review.</p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

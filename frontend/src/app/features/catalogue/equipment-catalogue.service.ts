@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
+import { Page } from '../bookings/booking-api.service';
 
 export interface EquipmentListingRequest {
   categoryId: string;
@@ -60,6 +61,21 @@ export interface EquipmentListing {
   longitude: number | null;
   status: string;
   createdAt: string;
+  /** Filled in on the public details endpoint only. */
+  averageRating: number | null;
+  reviewCount: number | null;
+  /** Short-lived URL of the cover photo; filled in on search results only, null when the listing has no photos. */
+  primaryImageUrl: string | null;
+}
+
+/** The backend accepts listing photos of these types up to 10 MB. */
+export function isListingPhoto(file: File): boolean {
+  return ['image/jpeg', 'image/png', 'image/webp'].includes(file.type) && file.size > 0 && file.size <= 10 * 1024 * 1024;
+}
+
+/** Parents first, each followed by its subcategories. */
+export function flattenCategories(categories: EquipmentCategory[]): EquipmentCategory[] {
+  return categories.flatMap(category => [category, ...flattenCategories(category.subcategories ?? [])]);
 }
 
 export interface EquipmentListingPage {
@@ -68,6 +84,14 @@ export interface EquipmentListingPage {
   size: number;
   totalElements: number;
   totalPages: number;
+}
+
+export interface EquipmentReview {
+  reviewId: string;
+  rating: number;
+  comments: string | null;
+  reviewerName: string;
+  createdAt: string;
 }
 
 export interface EquipmentImage {
@@ -115,6 +139,11 @@ export class EquipmentCatalogueService {
     return this.http.get<EquipmentListing>(`/api/v1/equipment/${encodeURIComponent(equipmentId)}`);
   }
 
+  reviews(equipmentId: string, page = 0, size = 10): Observable<Page<EquipmentReview>> {
+    return this.http.get<Page<EquipmentReview>>(
+      `/api/v1/equipment/${encodeURIComponent(equipmentId)}/reviews`, { params: { page, size } });
+  }
+
   images(equipmentId: string): Observable<EquipmentImage[]> {
     return this.http.get<EquipmentImage[]>(
       `/api/v1/equipment/${encodeURIComponent(equipmentId)}/images`
@@ -137,6 +166,35 @@ export class EquipmentCatalogueService {
   completeImage(equipmentId: string, imageId: string): Observable<EquipmentImage> {
     return this.http.post<EquipmentImage>(
       `/api/v1/owner/equipment/${encodeURIComponent(equipmentId)}/images/${encodeURIComponent(imageId)}/complete`,
+      {}
+    );
+  }
+
+  /** Presigns, uploads the file straight to private storage, then confirms it; resolves to the new photo. */
+  async uploadImage(equipmentId: string, file: File): Promise<EquipmentImage> {
+    const upload = await firstValueFrom(this.presignImage(equipmentId, file));
+    const response = await fetch(upload.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': upload.contentType },
+      body: file
+    });
+    if (!response.ok) {
+      throw new Error(`Storage upload failed with HTTP ${response.status}.`);
+    }
+    return firstValueFrom(this.completeImage(equipmentId, upload.imageId));
+  }
+
+  /** Resolves to the listing's remaining photos. */
+  deleteImage(equipmentId: string, imageId: string): Observable<EquipmentImage[]> {
+    return this.http.delete<EquipmentImage[]>(
+      `/api/v1/owner/equipment/${encodeURIComponent(equipmentId)}/images/${encodeURIComponent(imageId)}`
+    );
+  }
+
+  /** Resolves to the listing's photos, the new cover first. */
+  makeCoverImage(equipmentId: string, imageId: string): Observable<EquipmentImage[]> {
+    return this.http.patch<EquipmentImage[]>(
+      `/api/v1/owner/equipment/${encodeURIComponent(equipmentId)}/images/${encodeURIComponent(imageId)}/primary`,
       {}
     );
   }

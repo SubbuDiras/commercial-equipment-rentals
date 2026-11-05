@@ -13,6 +13,10 @@ public enum BookingStatus {
     RETURNED,
     DISPUTED,
     INSPECTION_PASSED,
+    COMPLETED,
+    CLOSED,
+    CANCELLED_BY_RENTER,
+    CANCELLED_BY_OWNER,
     OWNER_REJECTED,
     REQUEST_EXPIRED,
     HOLD_EXPIRED;
@@ -22,7 +26,8 @@ public enum BookingStatus {
             case REQUESTED, PAYMENT_PENDING, PAYMENT_FAILED ->
                     holdExpiresAt != null && holdExpiresAt.isAfter(now);
             case CONFIRMED, HANDOVER_PENDING, IN_PROGRESS, RETURN_PENDING, RETURNED, DISPUTED, INSPECTION_PASSED -> true;
-            case OWNER_REJECTED, REQUEST_EXPIRED, HOLD_EXPIRED -> false;
+            case COMPLETED, CLOSED, CANCELLED_BY_RENTER, CANCELLED_BY_OWNER,
+                    OWNER_REJECTED, REQUEST_EXPIRED, HOLD_EXPIRED -> false;
         };
     }
 }

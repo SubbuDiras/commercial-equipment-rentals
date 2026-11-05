@@ -4,6 +4,9 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Size;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.math.BigDecimal;
+import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 
 @Validated
@@ -43,5 +48,17 @@ public class EquipmentCatalogueController {
     @GetMapping("/{equipmentId}")
     public EquipmentListingResponse get(@PathVariable String equipmentId) {
         return catalogueService.getPublicListing(equipmentId);
+    }
+
+    /**
+     * The catalogue card's photo address: redirects to a fresh short-lived storage link each time. The redirect may be
+     * cached for 5 minutes, well inside the storage link's 15.
+     */
+    @GetMapping("/{equipmentId}/cover")
+    public ResponseEntity<Void> cover(@PathVariable String equipmentId) {
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(catalogueService.coverPhotoUrl(equipmentId)))
+                .cacheControl(CacheControl.maxAge(Duration.ofMinutes(5)).cachePrivate())
+                .build();
     }
 }

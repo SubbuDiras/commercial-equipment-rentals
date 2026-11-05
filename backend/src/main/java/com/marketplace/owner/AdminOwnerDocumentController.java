@@ -6,6 +6,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -30,9 +31,11 @@ public class AdminOwnerDocumentController {
     public OwnerDocumentController.OwnerDocumentDownloadResponse download(
             @PathVariable String ownerProfileId,
             @PathVariable String documentId,
+            /** true: a link the browser shows in the page (the review preview) instead of saving as a file. */
+            @RequestParam(defaultValue = "false") boolean inline,
             @AuthenticationPrincipal Jwt jwt
     ) {
         return new OwnerDocumentController.OwnerDocumentDownloadResponse(
-                documentService.adminDownloadUrl(ownerProfileId, documentId, jwt));
+                documentService.adminDownloadUrl(ownerProfileId, documentId, jwt, inline));
     }
 }

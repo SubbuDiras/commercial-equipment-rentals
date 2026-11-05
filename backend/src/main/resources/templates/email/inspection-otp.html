@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p><span th:text="${requesterName}">The other party</span> generated a
+    <span th:text="${inspection}">handover</span> code for this booking:</p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p style="font-size: 28px; letter-spacing: 6px; font-weight: bold;" th:text="${code}">000000</p>
+<p>Read this code to <span th:text="${requesterName}">them</span> <strong>only when you are together with the
+    equipment</strong>. It confirms you are present for the <span th:text="${inspection}">handover</span> inspection
+    and expires in 15 minutes.</p>
+<p>Never share it by phone or message before you meet.</p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

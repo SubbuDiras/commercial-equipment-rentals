@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>This rental is complete.
+    <span th:if="${recipient.role() == 'RENTER'}">Your security deposit refund has been issued.</span>
+    <span th:if="${recipient.role() == 'OWNER'}">Your payout has been released.</span></p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p><strong>How did it go?</strong> Please leave a review within <span th:text="${reviewWindowDays}">14</span> days;
+    it helps other renters and owners.</p>
+<p><a th:href="${bookingUrl}" href="#">Leave a review</a></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

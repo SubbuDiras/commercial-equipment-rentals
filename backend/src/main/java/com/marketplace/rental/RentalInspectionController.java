@@ -61,11 +61,12 @@ public class RentalInspectionController {
     }
 
     @PostMapping("/disputes")
-    public String raiseDamageClaim(
+    public DamageClaimResponse raiseDamageClaim(
             @PathVariable String bookingId,
             @Valid @RequestBody DamageClaimRequest request,
             @AuthenticationPrincipal Jwt jwt
     ) {
-        return rentalInspectionService.raiseDamageClaim(bookingId, request, jwt);
+        String disputeId = rentalInspectionService.raiseDamageClaim(bookingId, request, jwt);
+        return new DamageClaimResponse(disputeId, bookingId, "OPEN");
     }
 }

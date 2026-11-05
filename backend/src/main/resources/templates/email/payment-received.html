@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p th:if="${recipient.role() == 'RENTER'}">We received your payment of
+    <strong>&#8377;<span th:text="${amount}">0.00</span></strong>. Your booking is confirmed.</p>
+<p th:if="${recipient.role() == 'OWNER'}">The renter has paid, so the booking below is <strong>confirmed</strong>.
+    Please prepare the equipment for handover.</p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p>At handover, each of you generates a handover code on the booking page; the code is emailed to the other person,
+    and you confirm the inspection together.</p>
+<p th:replace="~{email/fragments :: bookingLink}"></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

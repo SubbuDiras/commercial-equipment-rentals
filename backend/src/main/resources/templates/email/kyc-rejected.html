@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>Your owner application could not be approved yet.</p>
+<p th:if="${reason}">Reason from our review team: <em th:text="${reason}">reason</em></p>
+<p>Please update your details or documents, and contact support if you have questions.</p>
+<p><a th:href="${ownerProfileUrl}" href="#">Review your application</a></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

@@ -23,6 +23,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +55,7 @@ class EquipmentCatalogueTests {
 
     @BeforeEach
     void createCatalogueSchema() {
+        jdbcTemplate.execute("DROP TABLE IF EXISTS reviews");
         jdbcTemplate.execute("DROP TABLE IF EXISTS bookings");
         jdbcTemplate.execute("DROP TABLE IF EXISTS equipment_images");
         jdbcTemplate.execute("DROP TABLE IF EXISTS audit_logs");
@@ -64,7 +66,11 @@ class EquipmentCatalogueTests {
         jdbcTemplate.execute("""
                 CREATE TABLE users (
                     id CHAR(36) PRIMARY KEY,
-                    keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE
+                    keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE,
+                    email VARCHAR(255),
+                    phone VARCHAR(20),
+                    first_name VARCHAR(100),
+                    last_name VARCHAR(100)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -121,7 +127,22 @@ class EquipmentCatalogueTests {
                     start_time TIMESTAMP(6) NOT NULL,
                     end_time TIMESTAMP(6) NOT NULL,
                     status VARCHAR(30) NOT NULL,
-                    hold_expires_at TIMESTAMP(6)
+                    hold_expires_at TIMESTAMP(6),
+                    renter_user_id CHAR(36)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE reviews (
+                    id CHAR(36) PRIMARY KEY,
+                    booking_id CHAR(36) NOT NULL,
+                    reviewer_user_id CHAR(36) NOT NULL,
+                    reviewee_user_id CHAR(36) NOT NULL,
+                    equipment_id CHAR(36) NOT NULL,
+                    rating INT NOT NULL,
+                    comments CLOB,
+                    is_published BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    UNIQUE (booking_id, reviewer_user_id)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -173,13 +194,32 @@ class EquipmentCatalogueTests {
         EquipmentListingResponse approved = catalogueService.review(draft.id(), adminJwt(), true, null);
 
         assertThat(approved.status()).isEqualTo("ACTIVE");
-        assertThat(catalogueService.search(null, "bengaluru", null, new BigDecimal("1500"), 0, 20)
+        assertThat(catalogueService.search(null, "hyderabad", null, new BigDecimal("1500"), 0, 20)
                 .content()).extracting(EquipmentListingResponse::id).containsExactly(draft.id());
         EquipmentListingResponse publicListing = catalogueService.getPublicListing(draft.id());
         assertThat(publicListing.title()).isEqualTo("Demolition hammer");
         assertThat(publicListing.serialNumber()).isNull();
         assertThat(publicListing.addressLine()).isNull();
         assertThat(publicListing.latitude()).isNull();
+        assertThat(publicListing.averageRating()).isNull();
+        assertThat(publicListing.reviewCount()).isZero();
+
+        // Two renter reviews count; the owner's review of a renter does not rate the equipment.
+        jdbcTemplate.update("""
+                INSERT INTO bookings (id, equipment_id, start_time, end_time, status, renter_user_id)
+                VALUES ('rated-1', ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'CLOSED', 'renter-a'),
+                       ('rated-2', ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'CLOSED', 'renter-b')
+                """, draft.id(), draft.id());
+        jdbcTemplate.update("""
+                INSERT INTO reviews (id, booking_id, reviewer_user_id, reviewee_user_id, equipment_id, rating)
+                VALUES ('review-1', 'rated-1', 'renter-a', 'user-1', ?, 5),
+                       ('review-2', 'rated-2', 'renter-b', 'user-1', ?, 4),
+                       ('review-3', 'rated-2', 'user-1', 'renter-b', ?, 1)
+                """, draft.id(), draft.id(), draft.id());
+        EquipmentListingResponse rated = catalogueService.getPublicListing(draft.id());
+        assertThat(rated.averageRating()).isEqualByComparingTo("4.50");
+        assertThat(rated.reviewCount()).isEqualTo(2);
+        assertThat(catalogueService.search(null, null, null, null, 0, 20).content().get(0).reviewCount()).isNull();
     }
 
     @Test
@@ -265,6 +305,88 @@ class EquipmentCatalogueTests {
     }
 
     @Test
+    void ownerManagesPhotosOnALiveListingAndOthersCannot() {
+        EquipmentListingResponse listing = catalogueService.create(ownerJwt("owner-1"), request(CATEGORY_ID));
+        catalogueService.submit(ownerJwt("owner-1"), listing.id());
+        catalogueService.review(listing.id(), adminJwt(), true, null);
+        when(objectStorage.presignPut(anyString(), anyString(), anyLong())).thenReturn(
+                new PrivateObjectStorage.PresignedUpload("https://storage.test/upload", Instant.now().plusSeconds(600)));
+        when(objectStorage.existsWithinLimit(anyString())).thenReturn(true);
+        when(objectStorage.presignGet(anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(invocation -> "https://storage.test/" + invocation.getArgument(0));
+
+        // Live listings take new photos without going back to review.
+        var first = mediaService.presign(listing.id(), new EquipmentImageUploadRequest("image/jpeg", 1024), ownerJwt("owner-1"));
+        mediaService.complete(listing.id(), first.imageId(), ownerJwt("owner-1"));
+        var second = mediaService.presign(listing.id(), new EquipmentImageUploadRequest("image/png", 1024), ownerJwt("owner-1"));
+        mediaService.complete(listing.id(), second.imageId(), ownerJwt("owner-1"));
+        assertThat(catalogueService.getPublicListing(listing.id()).status()).isEqualTo("ACTIVE");
+
+        var reordered = mediaService.makePrimary(listing.id(), second.imageId(), ownerJwt("owner-1"));
+        assertThat(reordered.get(0).imageId()).isEqualTo(second.imageId());
+        assertThat(reordered.get(0).primary()).isTrue();
+
+        var remaining = mediaService.delete(listing.id(), second.imageId(), ownerJwt("owner-1"));
+        assertThat(remaining).singleElement().satisfies(image -> {
+            assertThat(image.imageId()).isEqualTo(first.imageId());
+            assertThat(image.primary()).as("the next photo becomes the cover").isTrue();
+        });
+        org.mockito.Mockito.verify(objectStorage).delete(org.mockito.ArgumentMatchers.contains(second.imageId()));
+
+        assertThatThrownBy(() -> mediaService.delete(listing.id(), first.imageId(), ownerJwt("owner-2")))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> mediaService.makePrimary(listing.id(), "no-such-photo", ownerJwt("owner-1")))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT action FROM audit_logs WHERE entity_id = ? AND action LIKE 'EQUIPMENT_PHOTO_%'", String.class, listing.id()))
+                .containsExactlyInAnyOrder("EQUIPMENT_PHOTO_ADDED", "EQUIPMENT_PHOTO_ADDED",
+                        "EQUIPMENT_PHOTO_COVER_SET", "EQUIPMENT_PHOTO_DELETED");
+    }
+
+    @Test
+    void searchResultsCarryTheCoverPhotoAndNullWhenThereIsNone() {
+        EquipmentListingResponse withPhoto = catalogueService.create(ownerJwt("owner-1"), request(CATEGORY_ID));
+        EquipmentListingResponse withoutPhoto = catalogueService.create(ownerJwt("owner-1"), request(CATEGORY_ID));
+        when(objectStorage.presignPut(anyString(), anyString(), anyLong())).thenReturn(
+                new PrivateObjectStorage.PresignedUpload("https://storage.test/upload", Instant.now().plusSeconds(600)));
+        when(objectStorage.existsWithinLimit(anyString())).thenReturn(true);
+        when(objectStorage.presignGet(anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(invocation -> "https://storage.test/" + invocation.getArgument(0));
+        var first = mediaService.presign(withPhoto.id(),
+                new EquipmentImageUploadRequest("image/jpeg", 1024), ownerJwt("owner-1"));
+        mediaService.complete(withPhoto.id(), first.imageId(), ownerJwt("owner-1"));
+        var second = mediaService.presign(withPhoto.id(),
+                new EquipmentImageUploadRequest("image/png", 1024), ownerJwt("owner-1"));
+        mediaService.complete(withPhoto.id(), second.imageId(), ownerJwt("owner-1"));
+        for (EquipmentListingResponse listing : List.of(withPhoto, withoutPhoto)) {
+            catalogueService.submit(ownerJwt("owner-1"), listing.id());
+            catalogueService.review(listing.id(), adminJwt(), true, null);
+        }
+
+        var results = catalogueService.search(null, null, null, null, 0, 20).content();
+
+        // Cards get the stable cover address (storage links expire), naming the cover image so a new cover is a new URL.
+        assertThat(results).filteredOn(listing -> listing.id().equals(withPhoto.id()))
+                .singleElement().extracting(EquipmentListingResponse::primaryImageUrl)
+                .isEqualTo("/api/v1/equipment/" + withPhoto.id() + "/cover?v=" + first.imageId());
+        assertThat(results).filteredOn(listing -> listing.id().equals(withoutPhoto.id()))
+                .singleElement().extracting(EquipmentListingResponse::primaryImageUrl).isNull();
+        assertThat(catalogueService.getPublicListing(withPhoto.id()).primaryImageUrl()).isNull();
+
+        // The address hands out a fresh storage link each time, for live listings only.
+        assertThat(catalogueService.coverPhotoUrl(withPhoto.id()))
+                .isEqualTo("https://storage.test/equipment/" + withPhoto.id() + "/images/" + first.imageId() + ".jpg");
+        assertThatThrownBy(() -> catalogueService.coverPhotoUrl(withoutPhoto.id()))
+                .isInstanceOf(ResourceNotFoundException.class);
+        EquipmentListingResponse draft = catalogueService.create(ownerJwt("owner-1"), request(CATEGORY_ID));
+        var draftImage = mediaService.presign(draft.id(),
+                new EquipmentImageUploadRequest("image/jpeg", 1024), ownerJwt("owner-1"));
+        mediaService.complete(draft.id(), draftImage.imageId(), ownerJwt("owner-1"));
+        assertThatThrownBy(() -> catalogueService.coverPhotoUrl(draft.id()))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
     void verifiedOwnerStatusIsRequiredToSubmitListing() {
         EquipmentListingResponse draft = catalogueService.create(ownerJwt("owner-1"), request(CATEGORY_ID));
         jdbcTemplate.update("UPDATE owner_profiles SET verification_status = 'UNDER_REVIEW' WHERE id = 'owner-profile-1'");
@@ -309,11 +431,11 @@ class EquipmentCatalogueTests {
                 true,
                 true,
                 new BigDecimal("350.00"),
-                "Shop 14, Whitefield",
-                "Bengaluru",
-                "560066",
-                new BigDecimal("12.9698000"),
-                new BigDecimal("77.7499000"));
+                "Shop 14, HITEC City",
+                "Hyderabad",
+                "500081",
+                new BigDecimal("17.4474000"),
+                new BigDecimal("78.3762000"));
     }
 
     private static Jwt ownerJwt(String subject) {
@@ -327,6 +449,7 @@ class EquipmentCatalogueTests {
         return Jwt.withTokenValue("admin-token")
                 .header("alg", "none")
                 .subject("admin-subject")
+                .claim("email", "admin@example.com")
                 .build();
     }
 }

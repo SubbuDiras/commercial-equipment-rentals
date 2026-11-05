@@ -12,11 +12,11 @@ public record OwnerOnboardingRequest(
         String companyName,
         @Pattern(regexp = "^$|[0-9A-Z]{15}")
         String gstin,
-        @Pattern(regexp = "^$|[A-Z]{5}[0-9]{4}[A-Z]")
+        @NotBlank
+        @Pattern(regexp = "[A-Z]{5}[0-9]{4}[A-Z]", message = "must look like ABCDE1234F")
         String pan,
         @NotBlank
-        @Size(min = 8, max = 34)
-        @Pattern(regexp = "[0-9]+")
+        @Pattern(regexp = "[0-9]{10}", message = "must be exactly 10 digits")
         String bankAccountNumber,
         @NotBlank
         @Pattern(regexp = "[A-Z]{4}0[A-Z0-9]{6}")
@@ -30,8 +30,19 @@ public record OwnerOnboardingRequest(
         @NotBlank
         @Size(max = 100)
         String lastName,
+        /** A 10-digit Indian mobile number with the +91 country code, e.g. +919876543210. */
         @NotBlank
-        @Size(max = 20)
-        String phone
+        @Pattern(regexp = "\\+91[6-9][0-9]{9}", message = "must be a 10-digit Indian mobile number, e.g. +919876543210")
+        String phone,
+        /** Any 12 digits; stored as the last 4 digits only. */
+        @NotBlank
+        @Pattern(regexp = "[0-9]{12}", message = "must be 12 digits")
+        String aadhaarNumber,
+        @NotBlank
+        @Size(max = 100)
+        String bankName,
+        @NotBlank
+        @Pattern(regexp = "SAVINGS|CURRENT")
+        String bankAccountType
 ) {
 }

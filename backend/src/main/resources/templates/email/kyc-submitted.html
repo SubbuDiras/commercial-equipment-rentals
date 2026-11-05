@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>We received your application to list equipment as an owner. Our team will review your details and documents
+    and let you know the outcome by email.</p>
+<p><a th:href="${ownerProfileUrl}" href="#">Check your application status</a></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1f2937; line-height: 1.5; max-width: 600px;">
+<p th:text="|Hi ${recipient.name()},|">Hi there,</p>
+<p>The owner accepted your booking request.</p>
+<div th:replace="~{email/fragments :: booking}"></div>
+<p>Please <strong>complete payment within 30 minutes</strong> to confirm the booking; after that the dates are
+    released.</p>
+<p th:replace="~{email/fragments :: bookingLink}"></p>
+<div th:replace="~{email/fragments :: footer}"></div>
+</body>
+</html>

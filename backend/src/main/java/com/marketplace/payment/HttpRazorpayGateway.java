@@ -1,6 +1,7 @@
 package com.marketplace.payment;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -8,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 @Component
+@ConditionalOnProperty(name = "payment.razorpay.fake", havingValue = "false", matchIfMissing = true)
 public class HttpRazorpayGateway implements RazorpayGateway {
 
     private final RestClient restClient;

@@ -1,12 +1,21 @@
 package com.rental.Marketplace;
 
+import com.marketplace.booking.BookingAction;
+import com.marketplace.booking.BookingDetailsResponse;
+import com.marketplace.booking.BookingDetailsService;
 import com.marketplace.booking.BookingStatus;
+import com.marketplace.exception.InvalidStateTransitionException;
+import com.marketplace.exception.ResourceNotFoundException;
 import com.marketplace.payment.PaymentOrderResponse;
 import com.marketplace.payment.PaymentService;
 import com.marketplace.payment.PaymentVerificationRequest;
 import com.marketplace.payment.RazorpayGateway;
 import com.marketplace.payment.RazorpaySignatureVerifier;
 import com.marketplace.exception.ConflictException;
+import com.marketplace.rental.AdminDisputeService;
+import com.marketplace.rental.ConditionApprovalResponse;
+import com.marketplace.rental.DisputeDetailResponse;
+import com.marketplace.rental.DisputeStatus;
 import com.marketplace.rental.InspectionPhotoRequest;
 import com.marketplace.rental.InspectionSubmissionRequest;
 import com.marketplace.rental.InspectionType;
@@ -21,6 +30,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -33,6 +44,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -45,12 +57,10 @@ import static org.mockito.Mockito.when;
 @ActiveProfiles("test")
 class PaymentServiceTests {
 
-    private static final String OWNER_ID = "phase4-owner-user";
-    private static final String RENTER_ID = "phase4-renter-user";
-    private static final String OWNER_PROFILE_ID = "phase4-owner-profile";
-    private static final String CATEGORY_ID = "phase4-category";
-    private static final String EQUIPMENT_ID = "phase4-equipment";
-    private static final String BOOKING_ID = "phase4-booking";
+    private static final String OWNER_ID = RentalLifecycleSchema.OWNER_ID;
+    private static final String RENTER_ID = RentalLifecycleSchema.RENTER_ID;
+    private static final String OWNER_PROFILE_ID = RentalLifecycleSchema.OWNER_PROFILE_ID;
+    private static final String BOOKING_ID = RentalLifecycleSchema.BOOKING_ID;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -64,6 +74,12 @@ class PaymentServiceTests {
     @Autowired
     private RazorpaySignatureVerifier signatureVerifier;
 
+    @Autowired
+    private BookingDetailsService bookingDetailsService;
+
+    @Autowired
+    private AdminDisputeService adminDisputeService;
+
     @MockBean
     private RazorpayGateway razorpayGateway;
 
@@ -72,242 +88,7 @@ class PaymentServiceTests {
 
     @BeforeEach
     void createPhaseFourSchema() {
-        jdbcTemplate.execute("DROP TABLE IF EXISTS rental_inspection_media");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS rental_inspection_uploads");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS rental_inspection_otps");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS rental_inspections");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS disputes");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS refunds");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS owner_settlements");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS payment_webhook_events");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS payments");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS booking_status_history");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS audit_logs");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS bookings");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS equipment");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS equipment_categories");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS owner_profiles");
-        jdbcTemplate.execute("DROP TABLE IF EXISTS users");
-        jdbcTemplate.execute("""
-                CREATE TABLE users (
-                    id CHAR(36) PRIMARY KEY,
-                    keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE,
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    phone VARCHAR(20),
-                    first_name VARCHAR(100) NOT NULL,
-                    last_name VARCHAR(100) NOT NULL
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE owner_profiles (
-                    id CHAR(36) PRIMARY KEY,
-                    user_id CHAR(36) NOT NULL UNIQUE,
-                    verification_status VARCHAR(30) NOT NULL,
-                    razorpay_linked_account_id VARCHAR(64)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE equipment_categories (
-                    id CHAR(36) PRIMARY KEY,
-                    slug VARCHAR(100) NOT NULL,
-                    name VARCHAR(150) NOT NULL
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE equipment (
-                    id CHAR(36) PRIMARY KEY,
-                    owner_id CHAR(36) NOT NULL,
-                    category_id CHAR(36) NOT NULL,
-                    status VARCHAR(30) NOT NULL
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE bookings (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_reference VARCHAR(32) NOT NULL,
-                    renter_user_id CHAR(36) NOT NULL,
-                    equipment_id CHAR(36) NOT NULL,
-                    start_time TIMESTAMP(6) NOT NULL,
-                    end_time TIMESTAMP(6) NOT NULL,
-                    status VARCHAR(30) NOT NULL,
-                    hold_expires_at TIMESTAMP(6),
-                    total_payable_amount DECIMAL(12,2) NOT NULL,
-                    base_rental_amount DECIMAL(12,2) NOT NULL,
-                    owner_commission_amount DECIMAL(12,2),
-                    security_deposit_amount DECIMAL(12,2) NOT NULL,
-                    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE payments (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL UNIQUE,
-                    razorpay_order_id VARCHAR(64) NOT NULL UNIQUE,
-                    razorpay_payment_id VARCHAR(64) UNIQUE,
-                    razorpay_signature VARCHAR(255),
-                    amount DECIMAL(12,2) NOT NULL,
-                    currency VARCHAR(10) NOT NULL,
-                    status VARCHAR(30) NOT NULL,
-                    failure_reason CLOB,
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-                    updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE payment_webhook_events (
-                    id CHAR(36) PRIMARY KEY,
-                    event_id VARCHAR(100) NOT NULL UNIQUE,
-                    event_type VARCHAR(100) NOT NULL,
-                    payload_hash VARCHAR(64) NOT NULL,
-                    raw_payload CLOB NOT NULL,
-                    status VARCHAR(30) NOT NULL,
-                    processed_at TIMESTAMP(6),
-                    error_message CLOB,
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE owner_settlements (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL UNIQUE,
-                    owner_profile_id CHAR(36) NOT NULL,
-                    gross_rental_amount DECIMAL(12,2) NOT NULL,
-                    platform_commission_amount DECIMAL(12,2) NOT NULL,
-                    net_payout_amount DECIMAL(12,2) NOT NULL,
-                    razorpay_transfer_id VARCHAR(64),
-                    owner_damage_award_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-                    status VARCHAR(30) NOT NULL,
-                    released_at TIMESTAMP(6),
-                    release_after TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE booking_status_history (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL,
-                    from_status VARCHAR(30),
-                    to_status VARCHAR(30) NOT NULL,
-                    changed_by_user_id CHAR(36),
-                    reason_or_notes CLOB,
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE rental_inspections (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL,
-                    inspection_type VARCHAR(30) NOT NULL,
-                    inspector_user_id CHAR(36) NOT NULL,
-                    hour_meter_reading DECIMAL(10,2),
-                    fuel_or_battery_level VARCHAR(50),
-                    checklist_json CLOB NOT NULL,
-                    condition_summary CLOB,
-                    otp_verified BOOLEAN NOT NULL,
-                    inspected_at TIMESTAMP(6) NOT NULL
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE rental_inspection_media (
-                    id CHAR(36) PRIMARY KEY,
-                    inspection_id CHAR(36) NOT NULL,
-                    storage_object_key VARCHAR(512) NOT NULL,
-                    media_tag VARCHAR(50) NOT NULL,
-                    geo_latitude DECIMAL(10,7),
-                    geo_longitude DECIMAL(10,7),
-                    captured_at TIMESTAMP(6) NOT NULL
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE rental_inspection_otps (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL,
-                    inspection_type VARCHAR(30) NOT NULL,
-                    participant_user_id CHAR(36) NOT NULL,
-                    code_hash CHAR(64) NOT NULL,
-                    expires_at TIMESTAMP(6) NOT NULL,
-                    verified_at TIMESTAMP(6),
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE rental_inspection_uploads (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL,
-                    inspection_type VARCHAR(30) NOT NULL,
-                    uploaded_by_user_id CHAR(36) NOT NULL,
-                    storage_object_key VARCHAR(512) NOT NULL UNIQUE,
-                    expires_at TIMESTAMP(6) NOT NULL,
-                    attached_at TIMESTAMP(6),
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE disputes (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL,
-                    raised_by_user_id CHAR(36) NOT NULL,
-                    dispute_category VARCHAR(50) NOT NULL,
-                    claim_amount DECIMAL(12,2) NOT NULL,
-                    approved_deduction_amount DECIMAL(12,2) DEFAULT 0.00,
-                    description CLOB NOT NULL,
-                    status VARCHAR(30) NOT NULL,
-                    resolution_notes CLOB,
-                    resolved_by_user_id CHAR(36),
-                    resolved_at TIMESTAMP(6),
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE refunds (
-                    id CHAR(36) PRIMARY KEY,
-                    booking_id CHAR(36) NOT NULL,
-                    payment_id CHAR(36) NOT NULL,
-                    razorpay_refund_id VARCHAR(64) NOT NULL,
-                    amount DECIMAL(12,2) NOT NULL,
-                    refund_type VARCHAR(50) NOT NULL,
-                    status VARCHAR(30) NOT NULL,
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-                    UNIQUE (booking_id, refund_type),
-                    UNIQUE (razorpay_refund_id)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE audit_logs (
-                    id CHAR(36) PRIMARY KEY,
-                    actor_user_id CHAR(36),
-                    action VARCHAR(100) NOT NULL,
-                    entity_name VARCHAR(100) NOT NULL,
-                    entity_id VARCHAR(64) NOT NULL,
-                    details_json CLOB,
-                    created_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6)
-                )
-                """);
-
-        jdbcTemplate.update("""
-                INSERT INTO users (id, keycloak_subject_id, email, phone, first_name, last_name)
-                VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
-                """,
-                OWNER_ID, "phase4-owner", "phase4-owner@example.com", "9876543210", "Owner", "Test",
-                RENTER_ID, "phase4-renter", "phase4-renter@example.com", "9876543211", "Renter", "Test",
-                "phase4-admin-user", "phase4-admin", "phase4-admin@example.com", "9876543212", "Admin", "Test");
-        jdbcTemplate.update("""
-                INSERT INTO owner_profiles (id, user_id, verification_status, razorpay_linked_account_id)
-                VALUES (?, ?, 'VERIFIED', NULL)
-                """, OWNER_PROFILE_ID, OWNER_ID);
-        jdbcTemplate.update("INSERT INTO equipment_categories (id, slug, name) VALUES (?, 'tools', 'Tools')", CATEGORY_ID);
-        jdbcTemplate.update("INSERT INTO equipment (id, owner_id, category_id, status) VALUES (?, ?, ?, 'ACTIVE')",
-                EQUIPMENT_ID, OWNER_PROFILE_ID, CATEGORY_ID);
-        jdbcTemplate.update("""
-                INSERT INTO bookings
-                    (id, booking_reference, renter_user_id, equipment_id, start_time, end_time,
-                     status, hold_expires_at, total_payable_amount, base_rental_amount,
-                     owner_commission_amount, security_deposit_amount)
-                VALUES (?, 'BKG-PHASE4-001', ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 100.00, 80.00, 9.60, 20.00)
-                """,
-                BOOKING_ID, RENTER_ID, EQUIPMENT_ID,
-                java.sql.Timestamp.from(Instant.now().minusSeconds(3600)),
-                java.sql.Timestamp.from(Instant.now().plusSeconds(3600)),
-                java.sql.Timestamp.from(Instant.now().plusSeconds(1800)));
+        RentalLifecycleSchema.create(jdbcTemplate);
         when(razorpayGateway.createOrder(anyLong(), anyString(), anyString()))
                 .thenReturn(new RazorpayGateway.RazorpayOrder("order_phase4", 10_000, "INR"));
         when(razorpayGateway.getPayment(anyString()))
@@ -579,6 +360,135 @@ class PaymentServiceTests {
                 SELECT COUNT(*) FROM refunds WHERE booking_id = ? AND refund_type = 'SECURITY_DEPOSIT'
                 """, Integer.class, BOOKING_ID)).isEqualTo(1);
         verify(razorpayGateway).releaseTransfer("transfer_phase4");
+    }
+
+    @Test
+    void ownerApprovesReturnedConditionOnlyOnce() {
+        jdbcTemplate.update("UPDATE bookings SET status = 'RETURNED' WHERE id = ?", BOOKING_ID);
+
+        assertThatThrownBy(() -> rentalInspectionService.approveCondition(BOOKING_ID, renterJwt()))
+                .isInstanceOf(AccessDeniedException.class);
+        ConditionApprovalResponse approved = rentalInspectionService.approveCondition(BOOKING_ID, ownerJwt());
+
+        assertThat(approved.bookingStatus()).isEqualTo(BookingStatus.INSPECTION_PASSED.name());
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM bookings WHERE id = ?",
+                String.class, BOOKING_ID)).isEqualTo(BookingStatus.INSPECTION_PASSED.name());
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT changed_by_user_id FROM booking_status_history
+                WHERE booking_id = ? AND to_status = 'INSPECTION_PASSED'
+                """, String.class, BOOKING_ID)).isEqualTo(OWNER_ID);
+        assertThatThrownBy(() -> rentalInspectionService.approveCondition(BOOKING_ID, ownerJwt()))
+                .isInstanceOf(InvalidStateTransitionException.class);
+    }
+
+    @Test
+    void bookingDetailsDriveTheLifecycleThroughAvailableActions() {
+        when(privateObjectStorage.presignGet(anyString(), anyBoolean())).thenReturn("https://private.test/view");
+
+        BookingDetailsResponse awaitingPayment = bookingDetailsService.get(BOOKING_ID, renterJwt(), List.of());
+        assertThat(awaitingPayment.viewerRole()).isEqualTo("RENTER");
+        assertThat(awaitingPayment.equipmentTitle()).isEqualTo("Phase four breaker");
+        assertThat(awaitingPayment.availableActions()).containsExactly(BookingAction.PAY, BookingAction.CANCEL);
+        assertThat(awaitingPayment.payment()).isNull();
+        assertThat(bookingDetailsService.get(BOOKING_ID, ownerJwt(), List.of()).availableActions())
+                .containsExactly(BookingAction.CANCEL);
+        assertThatThrownBy(() -> bookingDetailsService.get(BOOKING_ID, adminJwt(), List.of()))
+                .isInstanceOf(AccessDeniedException.class);
+
+        paymentService.createOrder(BOOKING_ID, renterJwt());
+        String captured = capturedPaymentPayload("pay_phase4");
+        paymentService.handleWebhook("evt_details_capture",
+                captured.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                signatureVerifier.sign(captured, "test-webhook-secret"));
+        BookingDetailsResponse confirmed = bookingDetailsService.get(BOOKING_ID, renterJwt(), List.of());
+        assertThat(confirmed.payment().status()).isEqualTo("CAPTURED");
+        assertThat(confirmed.availableActions()).containsExactly(
+                BookingAction.GENERATE_HANDOVER_OTP, BookingAction.UPLOAD_HANDOVER_PHOTOS, BookingAction.CANCEL);
+
+        OtpChallengeResponse ownerHandover = rentalInspectionService.issueOtp(
+                BOOKING_ID, InspectionType.HANDOVER, ownerJwt());
+        OtpChallengeResponse renterHandover = rentalInspectionService.issueOtp(
+                BOOKING_ID, InspectionType.HANDOVER, renterJwt());
+        List<InspectionPhotoRequest> handoverPhotos = photos(InspectionType.HANDOVER);
+        BookingDetailsResponse readyForHandover = bookingDetailsService.get(BOOKING_ID, ownerJwt(), List.of());
+        assertThat(readyForHandover.otpStatus().ownerRequested()).isTrue();
+        assertThat(readyForHandover.otpStatus().renterRequested()).isTrue();
+        assertThat(readyForHandover.inspectionUploads()).hasSize(4)
+                .allSatisfy(upload -> assertThat(upload.uploadedByMe()).isFalse());
+        assertThat(readyForHandover.availableActions()).contains(BookingAction.SUBMIT_HANDOVER);
+        rentalInspectionService.submit(BOOKING_ID, InspectionType.HANDOVER,
+                inspection(ownerHandover.code(), renterHandover.code(), handoverPhotos), ownerJwt());
+
+        jdbcTemplate.update("UPDATE bookings SET end_time = ? WHERE id = ?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(60)), BOOKING_ID);
+        OtpChallengeResponse ownerReturn = rentalInspectionService.issueOtp(
+                BOOKING_ID, InspectionType.RETURN, ownerJwt());
+        OtpChallengeResponse renterReturn = rentalInspectionService.issueOtp(
+                BOOKING_ID, InspectionType.RETURN, renterJwt());
+        rentalInspectionService.submit(BOOKING_ID, InspectionType.RETURN,
+                inspection(ownerReturn.code(), renterReturn.code(), photos(InspectionType.RETURN)), renterJwt());
+
+        BookingDetailsResponse returned = bookingDetailsService.get(BOOKING_ID, ownerJwt(), List.of());
+        assertThat(returned.viewerRole()).isEqualTo("OWNER");
+        assertThat(returned.availableActions())
+                .containsExactly(BookingAction.APPROVE_CONDITION, BookingAction.RAISE_DISPUTE);
+        assertThat(returned.disputeDeadline()).isAfter(Instant.now().plusSeconds(23 * 60 * 60L));
+        assertThat(returned.inspections()).hasSize(2)
+                .allSatisfy(report -> assertThat(report.photos()).hasSize(4));
+        assertThat(returned.otpStatus()).isNull();
+        assertThat(bookingDetailsService.get(BOOKING_ID, renterJwt(), List.of()).availableActions()).isEmpty();
+
+        String disputeId = rentalInspectionService.raiseDamageClaim(BOOKING_ID,
+                new DamageClaimRequest("DAMAGE", new BigDecimal("5.00"), "Cracked housing."), ownerJwt());
+        BookingDetailsResponse disputed = bookingDetailsService.get(
+                BOOKING_ID, adminJwt(), List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+        assertThat(disputed.viewerRole()).isEqualTo("ADMIN");
+        assertThat(disputed.dispute().disputeId()).isEqualTo(disputeId);
+        assertThat(disputed.availableActions()).containsExactly(BookingAction.RESOLVE_DISPUTE);
+        assertThat(bookingDetailsService.get(BOOKING_ID, ownerJwt(), List.of()).availableActions()).isEmpty();
+    }
+
+    @Test
+    void adminDisputeQueueShowsDetailsWithInspectionPhotos() {
+        when(privateObjectStorage.presignGet(anyString(), anyBoolean())).thenReturn("https://private.test/view");
+        jdbcTemplate.update("UPDATE bookings SET status = 'RETURNED' WHERE id = ?", BOOKING_ID);
+        jdbcTemplate.update("""
+                INSERT INTO rental_inspections
+                    (id, booking_id, inspection_type, inspector_user_id, checklist_json, otp_verified, inspected_at)
+                VALUES ('phase4-return', ?, 'RETURN', ?, '{"condition_acceptable":false}', TRUE, ?)
+                """, BOOKING_ID, RENTER_ID, java.sql.Timestamp.from(Instant.now().minusSeconds(60)));
+        for (int index = 0; index < 4; index++) {
+            jdbcTemplate.update("""
+                    INSERT INTO rental_inspection_media (id, inspection_id, storage_object_key, media_tag, captured_at)
+                    VALUES (?, 'phase4-return', ?, 'CONDITION', CURRENT_TIMESTAMP(6))
+                    """, "phase4-media-" + index, "rentals/" + BOOKING_ID + "/return/photo-" + index + ".jpg");
+        }
+        String disputeId = rentalInspectionService.raiseDamageClaim(BOOKING_ID,
+                new DamageClaimRequest("DAMAGE", new BigDecimal("12.50"), "Hydraulic leak."), ownerJwt());
+
+        assertThat(adminDisputeService.list(DisputeStatus.OPEN))
+                .singleElement()
+                .satisfies(summary -> {
+                    assertThat(summary.disputeId()).isEqualTo(disputeId);
+                    assertThat(summary.bookingReference()).isEqualTo("BKG-PHASE4-001");
+                    assertThat(summary.equipmentTitle()).isEqualTo("Phase four breaker");
+                    assertThat(summary.raisedByName()).isEqualTo("Owner Test");
+                });
+        assertThat(adminDisputeService.list(DisputeStatus.RESOLVED)).isEmpty();
+        assertThat(adminDisputeService.list(null)).hasSize(1);
+
+        DisputeDetailResponse detail = adminDisputeService.get(disputeId);
+        assertThat(detail.claimAmount()).isEqualByComparingTo("12.50");
+        assertThat(detail.bookingStatus()).isEqualTo(BookingStatus.DISPUTED.name());
+        assertThat(detail.renter().email()).isEqualTo("phase4-renter@example.com");
+        assertThat(detail.inspections()).singleElement().satisfies(report -> {
+            assertThat(report.checklist()).containsEntry("condition_acceptable", false);
+            assertThat(report.photos()).hasSize(4)
+                    .allSatisfy(photo -> assertThat(photo.url()).isEqualTo("https://private.test/view"));
+        });
+        verify(privateObjectStorage).presignGet("rentals/" + BOOKING_ID + "/return/photo-0.jpg", false);
+        assertThatThrownBy(() -> adminDisputeService.get("missing"))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     private static String capturedPaymentPayload(String paymentId) {

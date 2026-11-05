@@ -6,6 +6,9 @@ import com.marketplace.booking.BookingResponse;
 import com.marketplace.booking.BookingService;
 import com.marketplace.booking.BookingStatus;
 import com.marketplace.booking.DeliveryOption;
+import com.marketplace.booking.OwnerBookingSummary;
+import com.marketplace.booking.RenterBookingSummary;
+import com.marketplace.common.PageResponse;
 import com.marketplace.exception.ConflictException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -88,7 +91,8 @@ class BookingServiceTests {
                     delivery_supported BOOLEAN NOT NULL,
                     pickup_supported BOOLEAN NOT NULL,
                     delivery_charge_flat DECIMAL(12,2),
-                    status VARCHAR(30) NOT NULL
+                    status VARCHAR(30) NOT NULL,
+                    title VARCHAR(255) NOT NULL DEFAULT 'Demolition hammer'
                 )
                 """);
         jdbcTemplate.execute("""
@@ -178,8 +182,8 @@ class BookingServiceTests {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT owner_earnings_estimated FROM bookings WHERE id = ?",
                 BigDecimal.class, created.bookingId())).isEqualByComparingTo("4224.00");
-        assertThat(bookingService.listForRenter(renterJwt("snapshot-renter"), 0, 20))
-                .extracting(BookingResponse::bookingId)
+        assertThat(bookingService.listForRenter(renterJwt("snapshot-renter"), 0, 20).content())
+                .extracting(RenterBookingSummary::bookingId)
                 .containsExactly(created.bookingId());
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM booking_price_items WHERE booking_id = ?",
@@ -204,6 +208,40 @@ class BookingServiceTests {
                 "SELECT reason_or_notes FROM booking_status_history WHERE booking_id = ? AND to_status = ?",
                 String.class, rejected.bookingId(), BookingStatus.OWNER_REJECTED.name()))
                 .isEqualTo("Equipment unavailable.");
+    }
+
+    @Test
+    void ownerListsIncomingBookingsNewestFirstWithStatusFilterAndPaging() {
+        Instant start = Instant.now().plusSeconds(172_800).truncatedTo(ChronoUnit.SECONDS);
+        BookingResponse first = bookingService.create(renterJwt("owner-list-renter-a"), request(start, 2));
+        jdbcTemplate.update("UPDATE bookings SET created_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(60)), first.bookingId());
+        BookingResponse second = bookingService.create(
+                renterJwt("owner-list-renter-b"), request(start.plusSeconds(5 * 86_400L), 2));
+        bookingService.accept(first.bookingId(), ownerJwt());
+
+        PageResponse<OwnerBookingSummary> all = bookingService.listForOwner(ownerJwt(), null, 0, 20);
+        assertThat(all.totalElements()).isEqualTo(2);
+        assertThat(all.content()).extracting(OwnerBookingSummary::bookingId)
+                .containsExactly(second.bookingId(), first.bookingId());
+        assertThat(all.content().get(0).equipmentTitle()).isEqualTo("Demolition hammer");
+        assertThat(all.content().get(0).renterName()).isEqualTo("owner-list-renter-b User");
+
+        PageResponse<OwnerBookingSummary> awaitingPayment = bookingService.listForOwner(
+                ownerJwt(), List.of(BookingStatus.PAYMENT_PENDING), 0, 20);
+        assertThat(awaitingPayment.content()).extracting(OwnerBookingSummary::bookingId)
+                .containsExactly(first.bookingId());
+
+        PageResponse<OwnerBookingSummary> secondPage = bookingService.listForOwner(ownerJwt(), null, 1, 1);
+        assertThat(secondPage.totalPages()).isEqualTo(2);
+        assertThat(secondPage.content()).extracting(OwnerBookingSummary::bookingId)
+                .containsExactly(first.bookingId());
+
+        assertThat(bookingService.listForOwner(renterJwt("owner-list-renter-a"), null, 0, 20).content()).isEmpty();
+        PageResponse<RenterBookingSummary> renterPage = bookingService.listForRenter(renterJwt("owner-list-renter-a"), 0, 20);
+        assertThat(renterPage.totalElements()).isEqualTo(1);
+        assertThat(renterPage.content().get(0).equipmentTitle()).isEqualTo("Demolition hammer");
+        assertThat(bookingService.listForRenter(renterJwt("never-booked"), 0, 20).content()).isEmpty();
     }
 
     @Test

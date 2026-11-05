@@ -9,7 +9,9 @@ export interface UserProfile {
   roles: string[];
 }
 
-const isLocalDevelopment = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const RETURN_URL_KEY = 'auth.returnUrl';
+
+const isLocalDevelopment =['localhost', '127.0.0.1'].includes(window.location.hostname);
 
 export const authCodeFlowConfig: AuthConfig = {
   issuer: isLocalDevelopment
@@ -33,21 +35,18 @@ export class AuthService {
   public readonly isOwner = computed(() => this.userSignal()?.roles.includes('ROLE_OWNER') ?? false);
   public readonly isAdmin = computed(() => this.userSignal()?.roles.includes('ROLE_ADMIN') ?? false);
 
+  /**
+   * Resolves once the login check after page load has finished (successfully or not). Route guards wait on it,
+   * so deep links and page refreshes are judged with the restored session instead of bouncing to sign-in.
+   */
+  public readonly ready: Promise<void>;
+
   constructor(private oauthService: OAuthService, private router: Router) {
-    this.configureKeycloak();
+    this.ready = this.configureKeycloak();
   }
 
-  private configureKeycloak(): void {
+  private async configureKeycloak(): Promise<void> {
     this.oauthService.configure(authCodeFlowConfig);
-    this.oauthService.loadDiscoveryDocumentAndTryLogin().then(() => {
-      if (this.oauthService.hasValidAccessToken()) {
-        this.extractUserClaims();
-      }
-      this.removeLoginResponseParams();
-    }).catch(err => {
-      console.warn('Keycloak discovery or login check failed:', err);
-    });
-
     this.oauthService.events.subscribe(() => {
       if (this.oauthService.hasValidAccessToken()) {
         this.extractUserClaims();
@@ -55,12 +54,42 @@ export class AuthService {
         this.userSignal.set(null);
       }
     });
+
+    try {
+      await this.oauthService.loadDiscoveryDocumentAndTryLogin();
+      // An expired access token can still be renewed with the stored refresh token after a page reload.
+      if (!this.oauthService.hasValidAccessToken() && this.oauthService.getRefreshToken()) {
+        await this.oauthService.refreshToken().catch(() => undefined);
+      }
+      if (this.oauthService.hasValidAccessToken()) {
+        this.extractUserClaims();
+        this.oauthService.setupAutomaticSilentRefresh();
+      }
+      this.settleStartUrl(this.oauthService.hasValidAccessToken());
+    } catch (err) {
+      console.warn('Keycloak discovery or login check failed:', err);
+    }
   }
 
-  // The library strips code/state/session_state after login but not Keycloak's `iss` parameter.
-  private removeLoginResponseParams(): void {
-    if (new URLSearchParams(window.location.search).has('iss')) {
-      this.router.navigate([], { queryParams: { iss: null }, queryParamsHandling: 'merge', replaceUrl: true });
+  /**
+   * Runs before the router's first navigation (see the app initializer in app.config.ts), so rewriting the address
+   * bar here decides where the app starts: the page requested before sign-in, or the current page without
+   * Keycloak's response parameters. Using the router instead would race its own first navigation and lose.
+   */
+  private settleStartUrl(signedIn: boolean): void {
+    const returnUrl = sessionStorage.getItem(RETURN_URL_KEY);
+    const url = new URL(window.location.href);
+    const isLoginCallback = ['code', 'state', 'session_state', 'iss'].some(param => url.searchParams.has(param));
+    if (signedIn && returnUrl && isLoginCallback) {
+      sessionStorage.removeItem(RETURN_URL_KEY);
+      window.history.replaceState(window.history.state, '', returnUrl);
+      return;
+    }
+    if (isLoginCallback) {
+      for (const param of ['code', 'state', 'session_state', 'iss']) {
+        url.searchParams.delete(param);
+      }
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
     }
   }
 
@@ -71,7 +100,8 @@ export class AuthService {
     const realmAccess = claims['realm_access'] || {};
     // Keep only application roles; Keycloak also adds internal ones such as
     // default-roles-marketplace-realm, offline_access and uma_authorization.
-    const roles: string[] = (realmAccess['roles'] || []).filter((role: string) => role.startsWith('ROLE_'));
+    const identityRoles = this.applicationRoles(realmAccess['roles']);
+    const roles = identityRoles.length > 0 ? identityRoles : this.accessTokenRoles();
 
     this.userSignal.set({
       sub: claims['sub'],
@@ -81,7 +111,37 @@ export class AuthService {
     });
   }
 
-  public login(): void {
+  private applicationRoles(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((role): role is string => typeof role === 'string' && role.startsWith('ROLE_'))
+      : [];
+  }
+
+  private accessTokenRoles(): string[] {
+    const encodedPayload = this.oauthService.getAccessToken().split('.')[1];
+    if (!encodedPayload) return [];
+
+    try {
+      const base64 = encodedPayload
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .padEnd(Math.ceil(encodedPayload.length / 4) * 4, '=');
+      const payload: unknown = JSON.parse(atob(base64));
+      if (typeof payload !== 'object' || payload === null) return [];
+
+      const realmAccess = (payload as Record<string, unknown>)['realm_access'];
+      if (typeof realmAccess !== 'object' || realmAccess === null) return [];
+
+      return this.applicationRoles((realmAccess as Record<string, unknown>)['roles']);
+    } catch (error) {
+      console.warn('Could not read roles from the Keycloak access token:', error);
+      return [];
+    }
+  }
+
+  /** @param returnUrl in-app URL to open after signing in (defaults to the current page) */
+  public login(returnUrl?: string): void {
+    sessionStorage.setItem(RETURN_URL_KEY, returnUrl ?? this.router.url);
     // initCodeFlow() silently does nothing until the discovery document is loaded, which can
     // happen if Keycloak was unreachable or misconfigured when the app first started.
     if (this.oauthService.discoveryDocumentLoaded) {
@@ -94,6 +154,15 @@ export class AuthService {
         console.error('Keycloak discovery failed; cannot start login:', err);
         alert('Sign-in is unavailable: the login server (Keycloak) could not be reached. Please try again shortly.');
       });
+  }
+
+  /** Keycloak's own account page, where users change their email address and password. */
+  public readonly accountConsoleUrl = `${authCodeFlowConfig.issuer}/account`;
+
+  /** Fetches fresh tokens so changes made on the server (a new name, a granted role) show without signing in again. */
+  public async refreshClaims(): Promise<void> {
+    await this.oauthService.refreshToken();
+    this.extractUserClaims();
   }
 
   public logout(): void {

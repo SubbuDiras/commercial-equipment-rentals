@@ -1,8 +1,15 @@
 package com.rental.Marketplace;
 
+import com.marketplace.exception.BadRequestException;
 import com.marketplace.exception.ConflictException;
 import com.marketplace.exception.ResourceNotFoundException;
+import com.marketplace.keycloak.KeycloakAdminClient;
+import com.marketplace.keycloak.KeycloakAdminException;
+import com.marketplace.owner.OwnerApprovalService;
 import com.marketplace.owner.OwnerDocumentService;
+import com.marketplace.owner.OwnerKycDetails;
+import com.marketplace.owner.OwnerProfileDetailsResponse;
+import com.marketplace.owner.RazorpayAccountResponse;
 import com.marketplace.owner.OwnerDocumentUploadRequest;
 import com.marketplace.owner.OwnerOnboardingRequest;
 import com.marketplace.owner.OwnerOnboardingService;
@@ -24,6 +31,8 @@ import java.time.Instant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(classes = com.marketplace.MarketplaceApplication.class)
@@ -39,8 +48,14 @@ class OwnerOnboardingServiceTests {
     @Autowired
     private OwnerDocumentService ownerDocumentService;
 
+    @Autowired
+    private OwnerApprovalService ownerApprovalService;
+
     @MockBean
     private PrivateObjectStorage objectStorage;
+
+    @MockBean
+    private KeycloakAdminClient keycloakAdminClient;
 
     @BeforeEach
     void createOwnerSchema() {
@@ -54,7 +69,7 @@ class OwnerOnboardingServiceTests {
                     id CHAR(36) PRIMARY KEY,
                     keycloak_subject_id VARCHAR(64) NOT NULL UNIQUE,
                     email VARCHAR(255) NOT NULL UNIQUE,
-                    phone VARCHAR(20) NOT NULL UNIQUE,
+                    phone VARCHAR(20) UNIQUE,
                     first_name VARCHAR(100) NOT NULL,
                     last_name VARCHAR(100) NOT NULL
                 )
@@ -78,6 +93,10 @@ class OwnerOnboardingServiceTests {
                     bank_account_number VARCHAR(34),
                     bank_ifsc VARCHAR(11),
                     bank_account_holder_name VARCHAR(255),
+                    bank_name VARCHAR(100),
+                    bank_account_type VARCHAR(10),
+                    aadhaar_last4 CHAR(4),
+                    razorpay_linked_account_id VARCHAR(64),
                     verification_status VARCHAR(30) NOT NULL,
                     rejection_reason VARCHAR(2000),
                     verified_at TIMESTAMP(6),
@@ -152,12 +171,132 @@ class OwnerOnboardingServiceTests {
     }
 
     @Test
+    void returnsTheCallersOwnerProfileOnlyAfterSubmission() {
+        assertThatThrownBy(() -> ownerOnboardingService.findMine(ownerJwt()))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+        OwnerProfileDetailsResponse underReview = ownerOnboardingService.findMine(ownerJwt());
+        assertThat(underReview.ownerProfileId()).isEqualTo(submitted.ownerProfileId());
+        assertThat(underReview.status()).isEqualTo(OwnerVerificationStatus.UNDER_REVIEW.name());
+        assertThat(underReview.businessName()).isEqualTo("Hyderabad Tool Rentals");
+        assertThat(underReview.razorpayAccountLinked()).isFalse();
+        // The owner sees their KYC details with the account number masked; Aadhaar is only ever the last 4 digits.
+        assertThat(underReview.kyc()).isEqualTo(new OwnerKycDetails("+919876543210", "ABCDE1234F", "36ABCDE1234F1Z5",
+                "2346", "HDFC Bank", "CURRENT", "••••••3210", "HDFC0001234", "Hyderabad Tool Rentals"));
+        assertThat(ownerOnboardingService.listForReview(OwnerVerificationStatus.UNDER_REVIEW).get(0).kyc()
+                .bankAccountNumber()).isEqualTo("9876543210");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM owner_profiles WHERE aadhaar_last4 = '2346'",
+                Integer.class)).isEqualTo(1);
+
+        ownerOnboardingService.reject(submitted.ownerProfileId(), adminJwt(), "Blurry PAN card.");
+        OwnerProfileDetailsResponse rejected = ownerOnboardingService.findMine(ownerJwt());
+        assertThat(rejected.status()).isEqualTo(OwnerVerificationStatus.REJECTED.name());
+        assertThat(rejected.rejectionReason()).isEqualTo("Blurry PAN card.");
+    }
+
+    @Test
+    void acceptsAny12DigitAadhaarNumberAndRefusesOtherLengths() {
+        assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), withAadhaar("56748765123")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Aadhaar number is 12 digits");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM owner_profiles", Integer.class)).isZero();
+
+        // Any 12 digits are fine; there is no checksum check.
+        ownerOnboardingService.submit(ownerJwt(), withAadhaar("567487651234"));
+        assertThat(jdbcTemplate.queryForObject("SELECT aadhaar_last4 FROM owner_profiles", String.class)).isEqualTo("1234");
+    }
+
+    private static OwnerOnboardingRequest withAadhaar(String aadhaarNumber) {
+        OwnerOnboardingRequest valid = request();
+        return new OwnerOnboardingRequest(valid.businessType(), valid.companyName(), valid.gstin(), valid.pan(),
+                valid.bankAccountNumber(), valid.bankIfsc(), valid.bankAccountHolderName(), valid.firstName(),
+                valid.lastName(), valid.phone(), aadhaarNumber, valid.bankName(), valid.bankAccountType());
+    }
+
+    @Test
+    void approvalGrantsOwnerRoleInKeycloakAfterCommitting() {
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+
+        OwnerReviewResponse approved = ownerApprovalService.approve(submitted.ownerProfileId(), adminJwt());
+
+        assertThat(approved.status()).isEqualTo(OwnerVerificationStatus.VERIFIED.name());
+        assertThat(approved.ownerRoleGranted()).isTrue();
+        assertThat(approved.warning()).isNull();
+        verify(keycloakAdminClient).grantRealmRole("owner-subject", "ROLE_OWNER");
+    }
+
+    @Test
+    void approvalSucceedsWithWarningWhenKeycloakRoleGrantFails() {
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+        doThrow(new KeycloakAdminException("Keycloak admin client is not configured."))
+                .when(keycloakAdminClient).grantRealmRole(anyString(), anyString());
+
+        OwnerReviewResponse approved = ownerApprovalService.approve(submitted.ownerProfileId(), adminJwt());
+
+        assertThat(approved.ownerRoleGranted()).isFalse();
+        assertThat(approved.warning()).contains("ROLE_OWNER", "owner@example.com", "sign in again");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT verification_status FROM owner_profiles WHERE id = ?",
+                String.class,
+                submitted.ownerProfileId())).isEqualTo(OwnerVerificationStatus.VERIFIED.name());
+    }
+
+    @Test
+    void adminLinksRazorpayAccountWithAudit() {
+        OwnerProfileResponse submitted = ownerOnboardingService.submit(ownerJwt(), request());
+
+        RazorpayAccountResponse linked = ownerOnboardingService.linkRazorpayAccount(
+                submitted.ownerProfileId(), "acc_TestLinked0001", adminJwt());
+
+        assertThat(linked.linkedAccountId()).isEqualTo("acc_TestLinked0001");
+        assertThat(ownerOnboardingService.findMine(ownerJwt()).razorpayAccountLinked()).isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ? AND action = 'OWNER_RAZORPAY_ACCOUNT_LINKED'",
+                Integer.class,
+                submitted.ownerProfileId())).isEqualTo(1);
+        assertThatThrownBy(() -> ownerOnboardingService.linkRazorpayAccount(
+                "missing-profile", "acc_TestLinked0001", adminJwt()))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
     void preventsSubmittingASecondOwnerProfileForTheSameAccount() {
         ownerOnboardingService.submit(ownerJwt(), request());
 
         assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), request()))
                 .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("already exists");
+                .hasMessageContaining("already submitted an owner application");
+    }
+
+    @Test
+    void aRejectedApplicantReappliesWithCorrectedDetailsAndGoesBackToReview() {
+        OwnerProfileResponse first = ownerOnboardingService.submit(ownerJwt(), request());
+        ownerOnboardingService.reject(first.ownerProfileId(), adminJwt(), "PAN does not match the card.");
+
+        OwnerOnboardingRequest original = request();
+        OwnerOnboardingRequest corrected = new OwnerOnboardingRequest(original.businessType(), original.companyName(),
+                original.gstin(), "ZZZZZ9999Z", "1112223334", "SBIN0001234", original.bankAccountHolderName(),
+                original.firstName(), original.lastName(), original.phone(), "567487651234", "State Bank of India",
+                "SAVINGS");
+        OwnerProfileResponse again = ownerOnboardingService.submit(ownerJwt(), corrected);
+
+        // The same application, back under review with the new details and the old reason cleared.
+        assertThat(again.ownerProfileId()).isEqualTo(first.ownerProfileId());
+        OwnerProfileDetailsResponse mine = ownerOnboardingService.findMine(ownerJwt());
+        assertThat(mine.status()).isEqualTo(OwnerVerificationStatus.UNDER_REVIEW.name());
+        assertThat(mine.rejectionReason()).isNull();
+        assertThat(mine.kyc()).extracting("pan", "aadhaarLast4", "bankName", "bankAccountNumber", "bankIfsc")
+                .containsExactly("ZZZZZ9999Z", "1234", "State Bank of India", "••••••3334", "SBIN0001234");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM owner_profiles", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE action = 'OWNER_ONBOARDING_RESUBMITTED'", Integer.class)).isEqualTo(1);
+
+        // The admin can decide again.
+        assertThat(ownerOnboardingService.approve(first.ownerProfileId(), adminJwt()).status())
+                .isEqualTo(OwnerVerificationStatus.VERIFIED.name());
+        assertThatThrownBy(() -> ownerOnboardingService.submit(ownerJwt(), corrected))
+                .isInstanceOf(ConflictException.class);
     }
 
     @Test
@@ -191,15 +330,18 @@ class OwnerOnboardingServiceTests {
     private static OwnerOnboardingRequest request() {
         return new OwnerOnboardingRequest(
                 "PROPRIETORSHIP",
-                "Bangalore Tool Rentals",
-                "29ABCDE1234F1Z5",
+                "Hyderabad Tool Rentals",
+                "36ABCDE1234F1Z5",
                 "ABCDE1234F",
-                "987654321098",
+                "9876543210",
                 "HDFC0001234",
-                "Bangalore Tool Rentals",
+                "Hyderabad Tool Rentals",
                 "Suresh",
                 "Patel",
-                "+919876543210");
+                "+919876543210",
+                "234123412346",
+                "HDFC Bank",
+                "CURRENT");
     }
 
     private static Jwt ownerJwt() {
@@ -214,6 +356,7 @@ class OwnerOnboardingServiceTests {
         return Jwt.withTokenValue("admin-token")
                 .header("alg", "none")
                 .subject("admin-subject")
+                .claim("email", "admin@example.com")
                 .build();
     }
 }

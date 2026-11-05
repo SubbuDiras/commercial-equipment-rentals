@@ -21,6 +21,23 @@ spring:
       write-dates-as-timestamps: false
     time-zone: UTC
 
+  # Profile photos are posted to the backend (other files go straight to storage); the browser sends a small crop.
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+
+  # Emails are sent after commit on the request thread; keep a dead SMTP server from stalling requests.
+  mail:
+    properties:
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
+  # Thymeleaf renders email templates only; no server-side web views.
+  thymeleaf:
+    check-template-location: false
+
 management:
   prometheus:
     metrics:
@@ -39,6 +56,36 @@ management:
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+# Service account used to grant ROLE_OWNER when an admin approves an owner's KYC.
+# With no client secret, approval still succeeds and the admin is told to assign the role by hand.
+keycloak:
+  admin:
+    base-url: ${KEYCLOAK_BASE_URL}
+    realm: ${KEYCLOAK_REALM}
+    client-id: ${KEYCLOAK_ADMIN_CLIENT_ID}
+    client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
+
+# Draft cancellation policy (docs/requirements/unresolved-business-decisions.md, Decision 6).
+# Pending legal review: these values are not approved for production enforcement.
+cancellation:
+  full-refund-hours: 48                       # >= 48 h before start: rental charges refunded less the gateway fee
+  partial-refund-hours: 24                    # 24-48 h: partial-refund-percent of rental charges
+  partial-refund-percent: 50
+  gateway-fee-percent: 2                      # of rental charges, full-refund tier only
+  partial-owner-compensation-percent: 0       # not specified by the draft policy
+  late-owner-compensation-percent: 80         # < 24 h: owner gets this share of the expected payout
+  owner-cancellation-platform-credit: 500.00  # recorded only; no credit ledger yet
+
+# Transactional email. Off unless a profile turns it on (dev: NOTIFICATIONS_ENABLED=true with Mailpit).
+notifications:
+  enabled: false
+  from: noreply@marketplace.local
+  app-base-url: http://localhost:4200     # frontend URL used in email links
+
+# Days after COMPLETED during which renter and owner may review; then the booking is CLOSED.
+reviews:
+  window-days: 14
 
 # OpenAPI / Swagger
 springdoc:
