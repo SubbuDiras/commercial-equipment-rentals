@@ -160,12 +160,13 @@ jobs:
           npm ci
           npx playwright install --with-deps ${{ github.event_name == 'schedule' && 'chromium firefox webkit' || 'chromium' }}
 
+      # http-get: Keycloak answers wait-on's default HEAD request with 405.
       - name: Wait for the stack
         run: >-
           npx --yes wait-on@8.0.3 -t 600000
-          http://localhost:8080/realms/marketplace-realm
-          http://localhost:8081/api/v1/health
-          http://localhost:4200
+          http-get://localhost:8080/realms/marketplace-realm
+          http-get://localhost:8081/api/v1/health
+          http-get://localhost:4200
 
       - name: Run e2e tests
         working-directory: e2e
@@ -178,6 +179,13 @@ jobs:
           else
             npm test
           fi
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo "::group::backend.log (last 150 lines)"; tail -n 150 backend.log || true; echo "::endgroup::"
+          echo "::group::frontend.log (last 50 lines)"; tail -n 50 frontend.log || true; echo "::endgroup::"
+          echo "::group::keycloak (last 50 lines)"; docker logs --tail 50 keycloak 2>&1 || true; echo "::endgroup::"
 
       - name: Upload report and logs
         if: always()
