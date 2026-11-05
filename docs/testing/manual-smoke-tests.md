@@ -203,7 +203,7 @@ At http://localhost:8081/swagger-ui.html click **Authorize** and paste a token (
 
 ## 14. Automated suite (Phase 8)
 
-- [ ] `cd e2e; npm test`. All 14 Playwright tests pass (needs the full stack running).
+- [ ] `cd e2e; npm test`. All 43 Playwright tests pass on Chromium (needs the full stack running). `npm run test:smoke` runs the 7 smoke tests; `npm run test:a11y` runs the accessibility checks. See [playwright-automation-plan.md](playwright-automation-plan.md).
 - [ ] `cd backend; .\gradlew.bat test`. All tests pass (Docker running for the MySQL tests).
 - [ ] `cd frontend; npm test; npm run build`. Tests pass, build has no errors.
 

@@ -1,5 +1,5 @@
 import { Api } from './support/api';
-import { env, users } from './support/env';
+import { allFixedUsers, env, users, usersForSlot, workerCount } from './support/env';
 import { KeycloakAdmin } from './support/keycloak-admin';
 
 /**
@@ -12,7 +12,7 @@ export default async function globalSetup(): Promise<void> {
   await expectReachable(`${env.mailpitUrl}/api/v1/messages`, 'Mailpit (docker compose up -d mailpit)');
 
   const keycloak = await KeycloakAdmin.connect();
-  for (const user of Object.values(users)) {
+  for (const user of allFixedUsers()) {
     await keycloak.ensureUser(user, user.roles);
   }
 
@@ -23,8 +23,12 @@ export default async function globalSetup(): Promise<void> {
   } catch (error) {
     throw new Error(`The backend dev tools are unavailable; run the backend with the dev profile. ${(error as Error).message}`);
   }
-  // Make the owner a verified owner with a payout account (the listing it creates is not used).
-  await Api.as(users.owner.email).seedOwnerListing();
+  // Make each worker's owners verified owners with a payout account (the listings they create are not used).
+  for (let slot = 0; slot < workerCount; slot++) {
+    const { owner, otherOwner } = usersForSlot(slot);
+    await Api.as(owner.email).seedOwnerListing();
+    await Api.as(otherOwner.email).seedOwnerListing();
+  }
 }
 
 async function expectReachable(url: string, what: string): Promise<void> {

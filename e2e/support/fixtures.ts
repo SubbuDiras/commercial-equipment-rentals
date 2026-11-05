@@ -4,6 +4,7 @@ import { users } from './env';
 export const renterApi = () => Api.as(users.renter.email);
 export const ownerApi = () => Api.as(users.owner.email);
 export const adminApi = () => Api.as(users.admin.email);
+export const outsiderApi = () => Api.as(users.outsider.email);
 
 /** A new approved listing owned by the e2e owner, so each test books without date clashes. */
 export async function freshListing(): Promise<{ equipmentId: string; title: string }> {
@@ -18,7 +19,7 @@ export async function freshListing(): Promise<{ equipmentId: string; title: stri
 export async function bookingIn(
   state: 'requested' | 'accepted' | 'paid',
   startInHours = 72
-): Promise<{ bookingId: string; title: string }> {
+): Promise<{ bookingId: string; title: string; equipmentId: string }> {
   const { equipmentId, title } = await freshListing();
   const bookingId = await renterApi().requestBooking(equipmentId, startInHours);
   if (state !== 'requested') {
@@ -27,7 +28,7 @@ export async function bookingIn(
   if (state === 'paid') {
     await renterApi().pay(bookingId);
   }
-  return { bookingId, title };
+  return { bookingId, title, equipmentId };
 }
 
 /** Formats an amount exactly like the frontend's ₹ pipe. */

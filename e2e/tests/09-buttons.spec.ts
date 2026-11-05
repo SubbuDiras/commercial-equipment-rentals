@@ -2,6 +2,8 @@ import { expect, Page, test } from '@playwright/test';
 import { users } from '../support/env';
 import { photos } from '../support/files';
 import { bookingIn, freshListing, ownerApi, renterApi } from '../support/fixtures';
+import { CataloguePage } from '../pages/catalogue.page';
+import { OwnerListingsPage } from '../pages/owner-listings.page';
 import { dialog, openBooking, signedInPage } from '../support/ui';
 
 /**
@@ -10,23 +12,19 @@ import { dialog, openBooking, signedInPage } from '../support/ui';
  */
 
 test('renter: catalogue search, clear, category page, and an incomplete booking request', async ({ browser }) => {
-  const page = await signedInPage(browser, users.renter.email, '/equipment');
+  const page = await signedInPage(browser, users.renter.email);
+  const catalogue = new CataloguePage(page);
+  await catalogue.open();
 
-  await page.getByLabel('City').fill('Hyderabad');
-  await page.getByRole('button', { name: 'Search equipment' }).click();
-  await expect(page.getByRole('heading', { name: /Search results/ })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Browse by category' })).toHaveCount(0);
-  for (const city of await page.locator('app-equipment-card').getByText(/day minimum$/).allTextContents()) {
+  await catalogue.searchCity('Hyderabad');
+  await expect(catalogue.categories).toHaveCount(0);
+  for (const city of await catalogue.cards.getByText(/day minimum$/).allTextContents()) {
     expect(city).toMatch(/^Hyderabad/i); // city search ignores case, and owners type it either way
   }
-  await page.getByRole('button', { name: 'Clear' }).click();
-  await expect(page.getByRole('heading', { name: /All equipment/ })).toBeVisible();
+  await catalogue.clearSearch();
 
-  const tile = page.getByRole('region', { name: 'Browse by category' }).locator('article').first();
-  const category = (await tile.getByRole('heading').textContent())!.trim();
-  await tile.getByRole('link', { name: /See all/ }).click();
-  await expect(page.getByRole('heading', { level: 1, name: category })).toBeVisible();
-  await expect(page.locator('app-equipment-card').first()).toBeVisible();
+  await catalogue.openFirstCategory();
+  await expect(catalogue.cards.first()).toBeVisible();
 
   const { equipmentId } = await freshListing();
   await page.goto(`/equipment/${equipmentId}/book`);
@@ -236,16 +234,5 @@ test('booking page: incomplete claim, inspection and review are explained', asyn
 });
 
 async function fillListing(page: Page, title: string): Promise<void> {
-  await page.getByRole('combobox', { name: 'Category' }).selectOption({ index: 1 });
-  await page.getByLabel('Listing title').fill(title);
-  await page.getByLabel('Description').fill('Checks that every listing button works.');
-  await page.getByLabel('Manufacturer', { exact: true }).fill('Bosch');
-  await page.getByLabel('Model', { exact: true }).fill('GSH 11 E');
-  await page.getByLabel('Daily rate (₹)').fill('1000');
-  await page.getByLabel('Refundable deposit (₹)').fill('2000');
-  await page.getByLabel('Address', { exact: true }).fill('Plot 1, HITEC City');
-  await page.getByLabel('City', { exact: true }).fill('Hyderabad');
-  await page.getByLabel('Postal code').fill('500081');
-  await page.getByLabel('Latitude').fill('17.4474');
-  await page.getByLabel('Longitude').fill('78.3762');
+  await new OwnerListingsPage(page).fill({ title, description: 'Checks that every listing button works.' });
 }

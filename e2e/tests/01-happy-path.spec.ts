@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { AdminListingsPage } from '../pages/admin.pages';
 import { Api } from '../support/api';
 import { uniqueEmail, users } from '../support/env';
 import { tinyPdf, tinyPng } from '../support/files';
 import { KeycloakAdmin } from '../support/keycloak-admin';
 import {
-  confirmInspection, dialog, expectStatus, generateCode, openBooking, register, signInAgain, signedInPage,
+  chooseListingCategory, confirmInspection, dialog, localDateTime, expectStatus, generateCode, openBooking, register, signInAgain, signedInPage,
   uploadInspectionPhotos
 } from '../support/ui';
 
@@ -12,7 +13,7 @@ import {
  * The whole marketplace through the UI: a new user signs up, becomes a verified owner, lists equipment; a renter
  * books and pays; both sides do handover and return; the owner approves; settlement completes; both review.
  */
-test('sign-up to closed booking, through the UI', async ({ browser }) => {
+test('sign-up to closed booking, through the UI', { tag: ['@smoke', '@slow'] }, async ({ browser }) => {
   const owner = { email: uniqueEmail('e2e-new-owner'), firstName: 'Nina', lastName: 'Newowner' };
   const title = `E2E plate compactor ${Date.now()}`;
 
@@ -74,7 +75,7 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   // 3. The owner signs in again to pick up ROLE_OWNER, creates a listing and submits it.
   await signInAgain(ownerPage, owner.email);
   await ownerPage.getByRole('link', { name: 'My Listings' }).click();
-  await ownerPage.getByRole('combobox', { name: 'Category' }).selectOption({ index: 1 });
+  await chooseListingCategory(ownerPage);
   await ownerPage.getByLabel('Listing title').fill(title);
   await ownerPage.getByLabel('Description').fill('Forward plate compactor for sub-base and paving work.');
   await ownerPage.getByLabel('Manufacturer', { exact: true }).fill('Wacker Neuson');
@@ -94,9 +95,9 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await expect(ownerPage.getByText('Listing submitted for admin approval.')).toBeVisible();
 
   // 4. Admin approves the listing.
-  await adminPage.goto('/admin/listings');
-  await adminPage.locator('article', { hasText: title }).getByRole('button', { name: 'Approve' }).click();
-  await expect(adminPage.locator('article', { hasText: title })).toHaveCount(0);
+  const adminListings = new AdminListingsPage(adminPage);
+  await adminListings.open();
+  await adminListings.approve(title);
 
   // 5. The renter finds the listing and requests a two-day booking starting in three days.
   const ownerApi = Api.as(owner.email);
@@ -114,6 +115,19 @@ test('sign-up to closed booking, through the UI', async ({ browser }) => {
   await expect(renterPage).toHaveURL(/\/bookings\/[\w-]+$/);
   const bookingId = renterPage.url().split('/').pop()!;
   await expectStatus(renterPage, 'Requested');
+
+  // The renter never sees the owner's KYC numbers, on the page or in the API responses behind it.
+  const secrets = ['234123412346', '2341 2341 2346', '1234567890', 'ABCDE1234F'];
+  const renterView = {
+    'booking page': await renterPage.locator('body').innerText(),
+    'booking API': JSON.stringify(await Api.as(users.renter.email).details(bookingId)),
+    'listing API': JSON.stringify(await Api.as(users.renter.email).get(`/api/v1/equipment/${listing.id}`))
+  };
+  for (const [where, text] of Object.entries(renterView)) {
+    for (const secret of secrets) {
+      expect(text, `${secret} found in ${where}`).not.toContain(secret);
+    }
+  }
 
   // 6. The owner accepts; the renter pays with the fake Razorpay.
   await ownerPage.goto('/owner/bookings');
@@ -172,10 +186,4 @@ async function review(page: import('@playwright/test').Page, stars: number, comm
   await page.getByLabel('Comments (optional)').fill(comments);
   await page.getByRole('button', { name: 'Submit review' }).click();
   await expect(page.getByText('Thank you for your review.')).toBeVisible();
-}
-
-/** Value for an <input type="datetime-local">, in the browser's local time. */
-function localDateTime(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }

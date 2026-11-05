@@ -48,7 +48,8 @@ test('owner marks a delivery booking as out for delivery; the renter sees the dr
   await expect(renterDelivery).toContainText('Suresh Driver');
   await expect(renterDelivery.getByRole('link', { name: '+919812345678' })).toHaveAttribute('href', 'tel:+919812345678');
   await expect(renterDelivery.getByRole('button')).toHaveCount(0);
-  const mail = await mailpit.waitFor(users.renter.email, 'is out for delivery');
+  const reference = (await renterApi().details(bookingId)).bookingReference as string;
+  const mail = await mailpit.waitFor(users.renter.email, `Your equipment for booking ${reference} is out for delivery`);
   expect(mail.html).toContain('TS09AB1234');
   expect(mail.html).toContain('Suresh Driver');
 });

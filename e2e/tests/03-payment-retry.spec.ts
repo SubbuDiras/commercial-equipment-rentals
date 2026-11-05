@@ -3,7 +3,7 @@ import { users } from '../support/env';
 import { bookingIn, renterApi } from '../support/fixtures';
 import { dialog, expectStatus, openBooking, signedInPage } from '../support/ui';
 
-test('a failed payment can be retried and then confirms the booking', async ({ browser }) => {
+test('a failed payment can be retried and then confirms the booking', { tag: '@smoke' }, async ({ browser }) => {
   const { bookingId } = await bookingIn('accepted');
   const page = await signedInPage(browser, users.renter.email);
   await openBooking(page, bookingId);

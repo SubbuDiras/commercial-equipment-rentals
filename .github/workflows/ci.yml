@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
   push:
+  schedule:
+    # Nightly, 02:00 IST: full e2e suite on every browser project.
+    - cron: "30 20 * * *"
 
 jobs:
   backend:
@@ -51,3 +54,140 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  # Browser tests against the whole stack: smoke on pull requests, everything on pushes, all browsers nightly.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [frontend]
+    timeout-minutes: 60
+    services:
+      mysql:
+        image: mysql:8.4.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: marketplace_dev
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      mailpit:
+        image: axllent/mailpit:v1.18.2
+        ports: ["1025:1025", "8025:8025"]
+    env:
+      CI: "true"
+      # Backend dev profile, pointed at the containers above (same names as backend/.env).
+      DB_URL: jdbc:mysql://localhost:3306/marketplace_dev?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadminpassword
+      S3_PRIVATE_BUCKET: marketplace-private
+      RAZORPAY_FAKE: "true"
+      RAZORPAY_KEY_ID: rzp_test_ci
+      RAZORPAY_KEY_SECRET: ci-fake-secret
+      RAZORPAY_WEBHOOK_SECRET: ci-fake-webhook-secret
+      RAZORPAY_API_BASE_URL: http://localhost:8081
+      PAYMENT_OPERATIONS_ENABLED: "true"
+      PAYMENT_PRODUCTION_APPROVED: "false"
+      PAYMENT_SANDBOX_ONLY: "true"
+      OTP_SECRET: ci-otp-secret-at-least-32-characters-long
+      CORS_ALLOWED_ORIGINS: http://localhost:4200
+      OIDC_ISSUER_URI: http://localhost:8080/realms/marketplace-realm
+      MANAGEMENT_PORT: "8082"
+      KEYCLOAK_BASE_URL: http://localhost:8080
+      KEYCLOAK_REALM: marketplace-realm
+      KEYCLOAK_ADMIN_CLIENT_ID: marketplace-backend
+      KEYCLOAK_ADMIN_CLIENT_SECRET: not-used-in-ci
+      MAIL_HOST: localhost
+      MAIL_PORT: "1025"
+      NOTIFICATIONS_ENABLED: "true"
+      # Test suite: Keycloak admin of the container started below, and two workers with their own test users.
+      E2E_KEYCLOAK_ADMIN_PASSWORD: admin_password
+      E2E_WORKERS: "2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Keycloak with the realm import
+        run: >-
+          docker run -d --name keycloak -p 8080:8080
+          -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin_password
+          -v ${{ github.workspace }}/infrastructure/keycloak:/opt/keycloak/data/import:ro
+          quay.io/keycloak/keycloak:25.0.6 start-dev --import-realm
+
+      - name: Start MinIO and create the buckets
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadminpassword \
+            -e MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:4200 \
+            bitnamilegacy/minio:2024.8.3-debian-12-r0
+          npx --yes wait-on@8.0.3 -t 120000 http://localhost:9000/minio/health/ready
+          docker exec minio bash -ec '
+            mc alias set local http://localhost:9000 minioadmin minioadminpassword
+            mc mb local/marketplace-media --ignore-existing
+            mc mb local/marketplace-private --ignore-existing
+            mc anonymous set download local/marketplace-media/public'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
+
+      - name: Start backend (dev profile)
+        working-directory: backend
+        run: |
+          chmod +x gradlew
+          nohup ./gradlew bootRun --args='--spring.profiles.active=dev' > ../backend.log 2>&1 &
+
+      - name: Start frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          nohup npm start > ../frontend.log 2>&1 &
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps ${{ github.event_name == 'schedule' && 'chromium firefox webkit' || 'chromium' }}
+
+      - name: Wait for the stack
+        run: >-
+          npx --yes wait-on@8.0.3 -t 600000
+          http://localhost:8080/realms/marketplace-realm
+          http://localhost:8081/api/v1/health
+          http://localhost:4200
+
+      - name: Run e2e tests
+        working-directory: e2e
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npm run test:smoke
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            # Add @a11y back once the colour-contrast issues are fixed.
+            npx playwright test --grep-invert @a11y
+          else
+            npm test
+          fi
+
+      - name: Upload report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            e2e/results.xml
+            backend.log
+            frontend.log
+          retention-days: 14

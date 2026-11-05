@@ -1,18 +1,29 @@
 import { Browser, expect, Page } from '@playwright/test';
-import { env, TestUser } from './env';
-import { photos } from './files';
+import { existsSync } from 'node:fs';
+import { authFile, env, TestUser } from './env';
+import { BookingDetailsPage } from '../pages/booking-details.page';
+import { OwnerListingsPage } from '../pages/owner-listings.page';
 
-/** Opens a fresh browser context and signs in through the real Keycloak login page. */
+/**
+ * Opens a fresh browser context and signs in through the real Keycloak login page. For a fixed user whose state
+ * auth.setup.ts saved, Keycloak still knows the session, so it sends the browser straight back without the form.
+ */
 export async function signedInPage(browser: Browser, email: string, path = '/'): Promise<Page> {
-  const context = await browser.newContext();
+  const saved = authFile(email);
+  const context = await browser.newContext(existsSync(saved) ? { storageState: saved } : {});
   const page = await context.newPage();
   // Start from the public catalogue: a protected path would send us to Keycloak before the header renders.
   await page.goto('/');
   await page.locator('#btn-header-login').click();
-  await page.locator('#username').fill(email);
-  await page.locator('#password').fill(env.password);
-  await page.locator('#kc-login').click();
-  await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible();
+  const signOut = page.getByRole('button', { name: 'Sign Out' });
+  const username = page.locator('#username');
+  await expect(signOut.or(username)).toBeVisible();
+  if (await username.isVisible()) {
+    await username.fill(email);
+    await page.locator('#password').fill(env.password);
+    await page.locator('#kc-login').click();
+  }
+  await expect(signOut).toBeVisible();
   if (path !== '/') {
     await page.goto(path);
   }
@@ -54,51 +65,39 @@ export async function signInAgain(page: Page, email: string): Promise<void> {
   await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible();
 }
 
+/** Picks the first category once My Listings has loaded (see OwnerListingsPage.waitUntilLoaded). */
+export const chooseListingCategory = (page: Page) => new OwnerListingsPage(page).chooseFirstCategory();
+
+/** Value for an <input type="datetime-local">, in the browser's local time. */
+export function localDateTime(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** A time `hours` from now, on the hour, so a form entry and the API agree. */
+export function hoursFromNow(hours: number): Date {
+  const date = new Date(Date.now() + hours * 3_600_000);
+  date.setMinutes(0, 0, 0);
+  return date;
+}
+
+/** Fills the booking request form with a period of `days` from `start` and submits it. */
+export async function requestInForm(page: Page, start: Date, days: number): Promise<void> {
+  await page.getByLabel('Start').fill(localDateTime(start));
+  await page.getByLabel('End').fill(localDateTime(new Date(start.getTime() + days * 86_400_000)));
+  await page.getByRole('button', { name: 'Request booking' }).click();
+}
+
 export function dialog(page: Page) {
   return page.getByRole('dialog');
 }
 
-export async function openBooking(page: Page, bookingId: string): Promise<void> {
-  await page.goto(`/bookings/${bookingId}`);
-  await expect(page.getByText(/^Booking BKG-/)).toBeVisible();
-}
+// Booking page shortcuts for older specs; new specs use BookingDetailsPage directly.
 
-export async function expectStatus(page: Page, label: string): Promise<void> {
-  await expect(page.locator('header app-status-badge')).toHaveText(label);
-}
-
-/** Generates this user's handover/return code on the booking page and returns it (shown in development only). */
-export async function generateCode(page: Page): Promise<string> {
-  await page.getByRole('button', { name: /Generate (my|a new) code/ }).click();
-  const code = page.getByText(/Development only/).locator('strong');
-  await expect(code).toHaveText(/^\d{6}$/);
-  return (await code.textContent())!.trim();
-}
-
-export async function uploadInspectionPhotos(page: Page, count = 4): Promise<void> {
-  await page.locator('app-inspection-wizard input[type=file]').setInputFiles(photos(count));
-  await expect(page.getByText(new RegExp(`Photos \\(${count} of at least 4\\)`))).toBeVisible();
-}
-
-/** Fills and submits the inspection confirmation, entering this user's code and the other side's code. */
-export async function confirmInspection(page: Page, myCode: string, otherCode: string, type: 'handover' | 'return'): Promise<void> {
-  await page.getByLabel('Hour meter reading').fill(type === 'handover' ? '100' : '112.5');
-  await page.getByLabel('All accessories present').check();
-  await page.getByLabel('Overall condition acceptable').check();
-  await page.getByLabel('Your code').fill(myCode);
-  await page.getByLabel(/^(Renter|Owner)'s code/).fill(otherCode);
-  await page.getByRole('button', { name: `Confirm ${type}` }).click();
-}
-
-/** Cancels from the booking page and returns the quoted total refund text. */
-export async function cancelFromBookingPage(page: Page, reason: string): Promise<string> {
-  await page.getByRole('button', { name: 'Cancel booking' }).click();
-  const modal = dialog(page);
-  await expect(modal.getByText('Total refund').or(modal.getByText('No payment has been taken'))).toBeVisible();
-  const totalCell = modal.locator('dt:has-text("Total refund") + dd');
-  const total = (await totalCell.count()) > 0 ? await totalCell.textContent() : null;
-  await modal.getByLabel('Reason for cancelling').fill(reason);
-  await modal.getByRole('button', { name: 'Cancel booking' }).click();
-  await expect(page.getByText('The booking has been cancelled.')).toBeVisible();
-  return (total ?? '').trim();
-}
+export const openBooking = (page: Page, bookingId: string) => new BookingDetailsPage(page).open(bookingId);
+export const expectStatus = (page: Page, label: string) => new BookingDetailsPage(page).expectStatus(label);
+export const generateCode = (page: Page) => new BookingDetailsPage(page).generateCode();
+export const uploadInspectionPhotos = (page: Page, count = 4) => new BookingDetailsPage(page).uploadInspectionPhotos(count);
+export const confirmInspection = (page: Page, myCode: string, otherCode: string, type: 'handover' | 'return') =>
+  new BookingDetailsPage(page).confirmInspection(myCode, otherCode, type);
+export const cancelFromBookingPage = (page: Page, reason: string) => new BookingDetailsPage(page).cancel(reason);

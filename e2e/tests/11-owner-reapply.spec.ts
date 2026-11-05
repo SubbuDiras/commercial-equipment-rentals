@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { OwnerOnboardingPage } from '../pages/owner-onboarding.page';
 import { Api } from '../support/api';
 import { uniqueEmail, users } from '../support/env';
-import { tinyPdf, tinyPng } from '../support/files';
+import { tinyPng } from '../support/files';
 import { register } from '../support/ui';
 
 test('a rejected applicant corrects their details and documents, and applies again', async ({ browser }) => {
@@ -9,23 +10,16 @@ test('a rejected applicant corrects their details and documents, and applies aga
   const page = await register(browser, applicant);
 
   // 1. Apply, with a PAN the reviewer will query.
-  await page.goto('/owner/onboarding');
-  await page.getByLabel('First name').fill(applicant.firstName);
-  await page.getByLabel('Last name').fill(applicant.lastName);
-  await page.getByLabel('Mobile number').fill(`97${Date.now().toString().slice(-8)}`);
-  await page.getByRole('textbox', { name: 'PAN', exact: true }).fill('AAAAA1111A');
-  await page.getByLabel('Aadhaar number').fill('5674 8765 1234');
-  await page.getByLabel('Account holder name').fill('Rekha Reapply');
-  await page.getByLabel('Bank name').fill('State Bank of India');
-  await page.getByLabel('Bank account number').fill('1234567890');
-  await page.getByLabel('Confirm account number').fill('1234567890');
-  await page.getByLabel('IFSC code').fill('SBIN0001234');
-  await page.getByLabel('Choose Aadhaar card file').setInputFiles({ name: 'aadhaar.pdf', mimeType: 'application/pdf', buffer: tinyPdf });
-  await page.getByLabel('Choose PAN card file').setInputFiles({ name: 'blurry-pan.png', mimeType: 'image/png', buffer: tinyPng });
-  await page.getByLabel('Choose Signature file').setInputFiles({ name: 'signature.png', mimeType: 'image/png', buffer: tinyPng });
-  await page.getByLabel('Choose Bank proof file').setInputFiles({ name: 'cheque.pdf', mimeType: 'application/pdf', buffer: tinyPdf });
-  await page.getByRole('button', { name: 'Submit for verification' }).click();
-  await expect(page.getByText('Under review').first()).toBeVisible();
+  const onboarding = new OwnerOnboardingPage(page);
+  await onboarding.open();
+  await onboarding.fillDetails({
+    firstName: applicant.firstName, lastName: applicant.lastName, phone: `97${Date.now().toString().slice(-8)}`,
+    pan: 'AAAAA1111A', aadhaar: '5674 8765 1234', accountHolder: 'Rekha Reapply', bankName: 'State Bank of India',
+    accountNumber: '1234567890', ifsc: 'SBIN0001234'
+  });
+  await onboarding.chooseDocuments({ aadhaar: 'aadhaar.pdf', pan: 'blurry-pan.png', signature: 'signature.png', bank: 'cheque.pdf' });
+  await onboarding.submit.click();
+  await onboarding.expectUnderReview();
 
   // 2. The admin rejects it.
   const admin = Api.as(users.admin.email);

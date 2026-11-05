@@ -1,4 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { Browser, expect, test } from '@playwright/test';
+import { AdminDisputesPage } from '../pages/admin.pages';
+import { Api } from '../support/api';
 import { users } from '../support/env';
 import { bookingIn, inr, ownerApi, renterApi } from '../support/fixtures';
 import { dialog, expectStatus, openBooking, signedInPage } from '../support/ui';
@@ -47,4 +49,64 @@ test('owner raises a damage claim and an admin resolves it', async ({ browser })
   const renterPage = await signedInPage(browser, users.renter.email);
   await openBooking(renterPage, bookingId);
   await expect(renterPage.locator('dt:has-text("Approved deduction") + dd')).toHaveText(inr(400));
+});
+
+/** A paid booking run to its return through the API, with the owner's claim raised. */
+async function returnedWithClaim(claimAmount: number) {
+  const { bookingId, title } = await bookingIn('paid');
+  const renter = renterApi();
+  const owner = ownerApi();
+  await renter.shiftTime(bookingId, -73);
+  await owner.completeInspection(bookingId, 'HANDOVER', renter);
+  await renter.shiftTime(bookingId, -49);
+  await owner.completeInspection(bookingId, 'RETURN', renter);
+  await owner.raiseDispute(bookingId, claimAmount);
+  return { bookingId, title };
+}
+
+async function adminDisputes(browser: Browser): Promise<AdminDisputesPage> {
+  return new AdminDisputesPage(await signedInPage(browser, users.admin.email));
+}
+
+const disputeRefunds = (details: Record<string, any>) =>
+  (details.payment.refunds as { type: string; amount: number }[]).filter(refund => refund.type === 'DISPUTE_BALANCE')
+    .reduce((sum, refund) => sum + Number(refund.amount), 0);
+
+test('admin rejects the claim: the whole deposit goes back to the renter', async ({ browser }) => {
+  const { bookingId, title } = await returnedWithClaim(500);
+  const disputes = await adminDisputes(browser);
+  await disputes.openClaim(title);
+  await disputes.resolve(0, 'E2E: claim rejected.');
+
+  const details = await renterApi().details(bookingId);
+  expect(Number(details.dispute.approvedDeductionAmount)).toBe(0);
+  expect(disputeRefunds(details)).toBe(Number(details.pricing.securityDepositAmount));
+});
+
+test('admin approves the full claim: the renter gets the rest of the deposit', async ({ browser }) => {
+  const { bookingId, title } = await returnedWithClaim(500);
+  const deposit = Number((await renterApi().details(bookingId)).pricing.securityDepositAmount);
+  const disputes = await adminDisputes(browser);
+  await disputes.openClaim(title);
+  await disputes.resolve(500, 'E2E: full claim approved.');
+
+  const details = await renterApi().details(bookingId);
+  expect(Number(details.dispute.approvedDeductionAmount)).toBe(500);
+  expect(disputeRefunds(details)).toBe(deposit - 500);
+});
+
+test('admin cannot deduct more than the claim, in the form or through the API', async ({ browser }) => {
+  const { bookingId, title } = await returnedWithClaim(300);
+
+  const disputes = await adminDisputes(browser);
+  await disputes.openClaim(title);
+  await disputes.askToResolve(301, 'E2E: too much.');
+  await expect(disputes.page.getByText('The deduction cannot be more than ₹300.')).toBeVisible();
+  await expect(dialog(disputes.page)).toHaveCount(0);
+
+  const disputeId = (await renterApi().details(bookingId)).dispute.disputeId;
+  await expect(Api.as(users.admin.email).patch(`/api/v1/admin/disputes/${disputeId}/resolve`,
+    { approvedDeductionAmount: 301, resolutionNotes: 'E2E: too much.' }))
+    .rejects.toThrow(/HTTP 409.*cannot exceed the damage claim or security deposit/);
+  expect(await renterApi().status(bookingId)).toBe('DISPUTED');
 });

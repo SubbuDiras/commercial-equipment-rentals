@@ -12,7 +12,7 @@ const TIERS = [
 ] as const;
 
 for (const tier of TIERS) {
-  test(`renter cancels ${tier.name}`, async ({ browser }) => {
+  test(`renter cancels ${tier.name}`, { tag: tier.tier === 'FULL_REFUND' ? ['@smoke'] : [] }, async ({ browser }) => {
     const { bookingId } = await bookingIn(tier.state, tier.startInHours);
     const quote = await renterApi().get(`/api/v1/bookings/${bookingId}/cancellation-quote`);
     expect(quote.breakdown.policyTier).toBe(tier.tier);
