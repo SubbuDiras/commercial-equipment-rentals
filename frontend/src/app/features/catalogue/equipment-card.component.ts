@@ -16,7 +16,7 @@ import { EquipmentListing } from './equipment-catalogue.service';
           <img [src]="item.primaryImageUrl" [alt]="item.title" loading="lazy"
                style="display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #fff;" />
         } @else {
-          <div style="display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 4 / 3; background: var(--color-bg-muted); color: var(--color-text-subtle); font-size: .875rem;">
+          <div style="display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 4 / 3; background: var(--color-bg-muted); color: #475569; font-size: .875rem;">
             No photo yet
           </div>
         }

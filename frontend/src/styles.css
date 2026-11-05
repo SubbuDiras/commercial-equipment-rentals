@@ -318,7 +318,8 @@ textarea.ng-invalid.ng-touched {
 
 .badge-neutral {
   background-color: var(--color-bg-muted);
-  color: var(--color-text-muted);
+  /* Slate-600: the muted text colour is under 4.5:1 on this background at badge size. */
+  color: #475569;
   border: 1px solid var(--color-border);
 }
 

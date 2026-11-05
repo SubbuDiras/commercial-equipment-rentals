@@ -46,7 +46,7 @@ const ROLE_LABELS: Record<string, string> = {
             <div style="font-family: var(--font-heading); font-weight: 800; font-size: 1.25rem; color: var(--color-primary-dark); letter-spacing: -0.02em;">
               EquipRent<span style="color: var(--color-primary-light);">India</span>
             </div>
-            <div style="font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-accent);">
+            <div style="font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #047857;">
               B2B Commercial Equipment
             </div>
           </div>
