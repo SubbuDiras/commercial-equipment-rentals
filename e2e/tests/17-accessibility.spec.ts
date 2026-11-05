@@ -1,12 +1,16 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, Page, test } from '@playwright/test';
+import { expect, Locator, Page, test } from '@playwright/test';
 import { users } from '../support/env';
 import { bookingIn, freshListing } from '../support/fixtures';
 import { signedInPage } from '../support/ui';
 
-/** Fails on serious or critical WCAG 2 A/AA violations, listing each with the elements it was found on. */
-async function expectAccessible(page: Page, ready: string | RegExp): Promise<void> {
-  await expect(page.getByRole('heading', { name: ready }).first()).toBeVisible();
+/**
+ * Fails on serious or critical WCAG 2 A/AA violations, listing each with the elements it was found on. `ready` is a
+ * heading that shows once the page has loaded, or a locator for pages whose loaded state is not a heading.
+ */
+async function expectAccessible(page: Page, ready: string | RegExp | Locator): Promise<void> {
+  const loaded = typeof ready === 'string' || ready instanceof RegExp ? page.getByRole('heading', { name: ready }) : ready;
+  await expect(loaded.first()).toBeVisible();
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
   const serious = results.violations
     .filter(violation => violation.impact === 'serious' || violation.impact === 'critical')
@@ -36,7 +40,7 @@ test.describe('accessibility', { tag: '@a11y' }, () => {
   test('booking page', async ({ browser }) => {
     const { bookingId } = await bookingIn('accepted');
     const page = await signedInPage(browser, users.renter.email, `/bookings/${bookingId}`);
-    await expectAccessible(page, /^Booking BKG-/);
+    await expectAccessible(page, page.getByText(/^Booking BKG-/));
   });
 
   test('my bookings', async ({ browser }) => {

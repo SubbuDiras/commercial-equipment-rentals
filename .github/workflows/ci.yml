@@ -99,7 +99,7 @@ jobs:
       KEYCLOAK_BASE_URL: http://localhost:8080
       KEYCLOAK_REALM: marketplace-realm
       KEYCLOAK_ADMIN_CLIENT_ID: marketplace-backend
-      KEYCLOAK_ADMIN_CLIENT_SECRET: not-used-in-ci
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ci-backend-secret
       MAIL_HOST: localhost
       MAIL_PORT: "1025"
       NOTIFICATIONS_ENABLED: "true"
@@ -168,14 +168,28 @@ jobs:
           http-get://localhost:8081/api/v1/health
           http-get://localhost:4200
 
+      # The realm import leaves this step to be done by hand (docs/deployment/local-dev-guide.md, section 3 step 4):
+      # the backend's service account copies profile names to Keycloak and grants ROLE_OWNER on KYC approval.
+      - name: Set up the backend's Keycloak service account
+        run: |
+          docker exec -i keycloak bash <<'SCRIPT'
+          set -e
+          kc=/opt/keycloak/bin/kcadm.sh
+          $kc config credentials --server http://localhost:8080 --realm master --user admin --password admin_password
+          id=$($kc get clients -r marketplace-realm -q clientId=marketplace-backend --fields id --format csv --noquotes)
+          $kc update "clients/$id" -r marketplace-realm -s bearerOnly=false -s publicClient=false \
+            -s serviceAccountsEnabled=true -s standardFlowEnabled=false -s secret=ci-backend-secret
+          $kc add-roles -r marketplace-realm --uusername service-account-marketplace-backend \
+            --cclientid realm-management --rolename manage-users --rolename view-users
+          SCRIPT
+
       - name: Run e2e tests
         working-directory: e2e
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             npm run test:smoke
           elif [ "${{ github.event_name }}" = "schedule" ]; then
-            # Add @a11y back once the colour-contrast issues are fixed.
-            npx playwright test --grep-invert @a11y
+            npx playwright test
           else
             npm test
           fi

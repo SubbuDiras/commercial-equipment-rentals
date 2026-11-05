@@ -4,10 +4,10 @@
   "private": true,
   "description": "End-to-end browser tests against a locally running stack (Angular, Spring Boot, Keycloak, MinIO, Mailpit).",
   "scripts": {
-    "test": "playwright test --project=chromium --grep-invert @a11y",
+    "test": "playwright test --project=chromium",
     "test:all-browsers": "playwright test",
     "test:smoke": "playwright test --project=chromium --grep @smoke",
-    "test:regression": "playwright test --project=chromium --grep-invert \"@smoke|@a11y\"",
+    "test:regression": "playwright test --project=chromium --grep-invert @smoke",
     "test:a11y": "playwright test --project=chromium --grep @a11y",
     "test:headed": "playwright test --project=chromium --headed",
     "test:ui": "playwright test --ui",

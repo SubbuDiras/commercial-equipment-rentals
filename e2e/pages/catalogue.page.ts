@@ -15,15 +15,16 @@ export class CataloguePage {
     await expect(this.page.getByRole('heading', { name: 'Equipment catalogue' })).toBeVisible();
   }
 
+  /** The result count appears only once the list has loaded; before that the previous results are still shown. */
   async searchCity(city: string): Promise<void> {
     await this.page.getByLabel('City').fill(city);
     await this.page.getByRole('button', { name: 'Search equipment' }).click();
-    await expect(this.page.getByRole('heading', { name: /Search results/ })).toBeVisible();
+    await expect(this.page.getByRole('heading', { name: /^Search results \(\d+\)$/ })).toBeVisible();
   }
 
   async clearSearch(): Promise<void> {
     await this.page.getByRole('button', { name: 'Clear' }).click();
-    await expect(this.page.getByRole('heading', { name: /All equipment/ })).toBeVisible();
+    await expect(this.page.getByRole('heading', { name: /^All equipment \(\d+\)$/ })).toBeVisible();
   }
 
   /** Opens the first category tile's "See all" page and returns the category name. */

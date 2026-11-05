@@ -9,7 +9,7 @@
 
 ## Status (2026-11-05)
 
-Implemented. Full Chromium suite: **all 43 pass**, about 2.7 min on 1 worker, 1.4–2 min with `E2E_WORKERS=3`.
+Implemented. Full Chromium suite including accessibility: **all 50 pass**, about 3 min on 1 worker, 1.5–2 min with `E2E_WORKERS=3`.
 
 | Item | State | Where |
 |---|---|---|
@@ -24,11 +24,11 @@ Implemented. Full Chromium suite: **all 43 pass**, about 2.7 min on 1 worker, 1.
 | B saved sign-in | Done; falls back to the form if a session has expired | `tests/auth.setup.ts`, `signedInPage` in `support/ui.ts` |
 | B page objects | Every main page: catalogue, booking request, booking details, my bookings, profile, owner onboarding, owner listings, owner bookings, admin owners/listings/disputes. Old `ui.ts` helpers delegate to them | `pages/`, `support/test.ts` |
 | D tags, scripts, CI config | Done | `package.json`, `playwright.config.ts` |
-| D CI job | Written, **not yet run on GitHub** | `.github/workflows/ci.yml` (`e2e` job) |
+| D CI job | Runs on every push and PR. Fixed in CI: wait for Keycloak with GET (it answers HEAD with 405) and set up the backend service account | `.github/workflows/ci.yml` (`e2e` job) |
 | D flaky label | Not done (create `flaky-test` label in GitHub) | — |
 | E per-worker users | Done (opt in with `E2E_WORKERS=N`; CI uses 2) | `support/env.ts`, `global-setup.ts` |
 | E other browsers | Smoke on Firefox and WebKit: pass, except the double-booking bug. Phone (Pixel 7): 2 more fail, layout bugs (below) | `playwright.config.ts`; `npm run install-all-browsers` once |
-| F accessibility | Written; **all 7 fail on colour contrast** (below); excluded from `npm test` | `tests/17-accessibility.spec.ts`, `npm run test:a11y` |
+| F accessibility | Pass, after fixing two colour-contrast problems (below); part of `npm test` | `tests/17-accessibility.spec.ts`, `npm run test:a11y` |
 | F P2 coverage | Booking history, unknown listing, server error, session loss, onboarding validation, extra emails | `tests/18`–`20`, `tests/08-emails.spec.ts` |
 | F PR template | Done | `.github/pull_request_template.md` |
 
@@ -36,7 +36,7 @@ Implemented. Full Chromium suite: **all 43 pass**, about 2.7 min on 1 worker, 1.
 
 1. **Fixed: requests did not block each other when MySQL runs on India time.** Hold expiry is stored in UTC but compared with MySQL's `CURRENT_TIMESTAMP` (local time) in `BookingService.hasOverlappingBooking` and `EquipmentCatalogueService`. On a MySQL set to IST (UTC+5:30), a new 4-hour hold already looks 1.5 hours expired, so overlapping requests are accepted. CI's MySQL container runs in UTC, so CI will not show it. Both queries now compare against a bound `Instant.now()` parameter, as `expireHolds` does.
 2. **No phone layout for the header.** At phone width the nav links, user name, role badge and Sign Out overlap and run off the right edge, so the page scrolls sideways. "Become an Owner" is covered and cannot be tapped, and in the cancel dialog the Cancel booking button is partly covered. Fails the mobile smoke runs of `01-happy-path` and `04-renter-cancels`.
-3. **Colour contrast below WCAG AA** on the small green tagline in the header (`header.component.ts:49`, `#059669` on white, 3.73:1) and on neutral status badges (`.badge-neutral` in `styles.css`, `#64748b` on `#f1f5f9`, 4.34:1). Needs 4.5:1.
+3. **Fixed: colour contrast below WCAG AA** on the small green tagline in the header (`header.component.ts:49`, `#059669` on white, 3.73:1) and on neutral status badges (`.badge-neutral` in `styles.css`, `#64748b` on `#f1f5f9`, 4.34:1). Needs 4.5:1. Also the "No photo yet" placeholder on equipment cards (`#94a3b8` on `#f1f5f9`, 2.34:1). The tagline now uses `#047857`; neutral badges and the placeholder use `#475569`.
 
 ---
 
