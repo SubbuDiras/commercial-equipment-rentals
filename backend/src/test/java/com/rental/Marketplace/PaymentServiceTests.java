@@ -39,11 +39,9 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -155,7 +153,7 @@ class PaymentServiceTests {
 
     @Test
     void validDuplicateWebhookIsRecordedAndAppliedExactlyOnce() {
-        PaymentOrderResponse order = paymentService.createOrder(BOOKING_ID, renterJwt());
+        paymentService.createOrder(BOOKING_ID, renterJwt());
         String raw = """
                 {"event":"payment.captured","payload":{"payment":{"entity":{
                   "id":"pay_webhook","order_id":"order_phase4","amount":10000,"currency":"INR"

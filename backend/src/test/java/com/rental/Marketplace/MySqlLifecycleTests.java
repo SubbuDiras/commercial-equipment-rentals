@@ -84,6 +84,7 @@ import static org.mockito.Mockito.when;
 class MySqlLifecycleTests {
 
     @Container
+    @SuppressWarnings("resource") // the @Container extension starts and stops it
     private static final MySQLContainer<?> MYSQL =
             new MySQLContainer<>("mysql:8.4.0")
                     .withDatabaseName("marketplace_lifecycle")

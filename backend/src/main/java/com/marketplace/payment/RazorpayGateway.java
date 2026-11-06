@@ -1,8 +1,5 @@
 package com.marketplace.payment;
 
-import java.math.BigDecimal;
-import java.util.Map;
-
 public interface RazorpayGateway {
 
     RazorpayOrder createOrder(long amountInPaise, String receipt, String currency);

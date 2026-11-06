@@ -20,21 +20,21 @@ public class HttpRazorpayGateway implements RazorpayGateway {
 
     @Override
     public RazorpayOrder createOrder(long amountInPaise, String receipt, String currency) {
-        JsonNode response = restClient.post()
+        JsonNode response = requireBody(restClient.post()
                 .uri("/orders")
                 .body(Map.of("amount", amountInPaise, "currency", currency, "receipt", receipt))
                 .retrieve()
-                .body(JsonNode.class);
+                .body(JsonNode.class));
         return new RazorpayOrder(response.path("id").asText(), response.path("amount").asLong(),
                 response.path("currency").asText());
     }
 
     @Override
     public RazorpayPayment getPayment(String paymentId) {
-        JsonNode response = restClient.get()
+        JsonNode response = requireBody(restClient.get()
                 .uri("/payments/{paymentId}", paymentId)
                 .retrieve()
-                .body(JsonNode.class);
+                .body(JsonNode.class));
         return new RazorpayPayment(response.path("id").asText(), response.path("order_id").asText(),
                 response.path("amount").asLong(), response.path("currency").asText(),
                 response.path("status").asText());
@@ -48,7 +48,7 @@ public class HttpRazorpayGateway implements RazorpayGateway {
             long platformCommissionInPaise,
             long holdUntilEpochSeconds
     ) {
-        JsonNode response = restClient.post()
+        JsonNode response = requireBody(restClient.post()
                 .uri("/payments/{paymentId}/transfers", paymentId)
                 .body(Map.of("transfers", List.of(Map.of(
                         "account", linkedAccountId,
@@ -58,7 +58,7 @@ public class HttpRazorpayGateway implements RazorpayGateway {
                         "on_hold_until", holdUntilEpochSeconds,
                         "notes", Map.of("platform_commission_paise", platformCommissionInPaise)))))
                 .retrieve()
-                .body(JsonNode.class);
+                .body(JsonNode.class));
         JsonNode transfer = response.path("items").isArray() && !response.path("items").isEmpty()
                 ? response.path("items").get(0)
                 : response;
@@ -75,11 +75,19 @@ public class HttpRazorpayGateway implements RazorpayGateway {
 
     @Override
     public String refund(String paymentId, long amountInPaise, String receipt) {
-        JsonNode response = restClient.post()
+        JsonNode response = requireBody(restClient.post()
                 .uri("/payments/{paymentId}/refund", paymentId)
                 .body(Map.of("amount", amountInPaise, "receipt", receipt))
                 .retrieve()
-                .body(JsonNode.class);
+                .body(JsonNode.class));
         return response.path("id").asText();
+    }
+
+    /** Razorpay always answers these calls with a JSON body; an empty one means something upstream is wrong. */
+    private static JsonNode requireBody(JsonNode body) {
+        if (body == null) {
+            throw new IllegalStateException("Razorpay returned an empty response body.");
+        }
+        return body;
     }
 }
