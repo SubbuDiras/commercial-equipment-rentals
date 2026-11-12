@@ -14,7 +14,7 @@ export class BookingDetailsPage {
   }
 
   async open(bookingId: string): Promise<void> {
-    await this.page.goto(`/bookings/${bookingId}`);
+    await this.page.goto(`/bookings/${bookingId}`, { waitUntil: 'domcontentloaded' });
     await expect(this.page.getByText(/^Booking BKG-/)).toBeVisible();
   }
 

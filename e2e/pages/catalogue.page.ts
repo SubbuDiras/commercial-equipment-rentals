@@ -11,7 +11,7 @@ export class CataloguePage {
   }
 
   async open(): Promise<void> {
-    await this.page.goto('/equipment');
+    await this.page.goto('/equipment', { waitUntil: 'domcontentloaded' });
     await expect(this.page.getByRole('heading', { name: 'Equipment catalogue' })).toBeVisible();
   }
 

@@ -24,7 +24,7 @@ export class OwnerOnboardingPage {
   }
 
   async open(): Promise<void> {
-    await this.page.goto('/owner/onboarding');
+    await this.page.goto('/owner/onboarding', { waitUntil: 'domcontentloaded' });
   }
 
   /** The help line under a field, which turns into the error once the field is left with a bad value. */

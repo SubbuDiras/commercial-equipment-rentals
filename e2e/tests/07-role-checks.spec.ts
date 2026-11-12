@@ -9,7 +9,7 @@ const NO_ACCESS = "You don't have access to this page";
 test('a renter cannot open owner or admin pages', { tag: '@smoke' }, async ({ browser }) => {
   const page = await signedInPage(browser, users.renter.email);
   for (const path of ['/owner/bookings', '/owner/equipment', '/admin/owners', '/admin/listings', '/admin/disputes', '/admin']) {
-    await page.goto(path);
+    await page.goto(path, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: NO_ACCESS }), path).toBeVisible();
   }
   await expect(page.getByRole('link', { name: 'Owner KYC' })).toHaveCount(0);
@@ -18,7 +18,7 @@ test('a renter cannot open owner or admin pages', { tag: '@smoke' }, async ({ br
 test('an owner cannot open admin pages', async ({ browser }) => {
   const page = await signedInPage(browser, users.owner.email);
   for (const path of ['/admin/owners', '/admin/disputes']) {
-    await page.goto(path);
+    await page.goto(path, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: NO_ACCESS }), path).toBeVisible();
   }
 });
@@ -27,17 +27,17 @@ test("another renter cannot open someone else's booking, but an admin can", asyn
   const { bookingId } = await bookingIn('requested');
 
   const outsider = await signedInPage(browser, users.outsider.email);
-  await outsider.goto(`/bookings/${bookingId}`);
+  await outsider.goto(`/bookings/${bookingId}`, { waitUntil: 'domcontentloaded' });
   await expect(outsider.getByRole('alert')).toBeVisible();
   await expect(outsider.getByText(/^Booking BKG-/)).toHaveCount(0);
 
   const admin = await signedInPage(browser, users.admin.email);
-  await admin.goto(`/bookings/${bookingId}`);
+  await admin.goto(`/bookings/${bookingId}`, { waitUntil: 'domcontentloaded' });
   await expect(admin.getByText(/^Booking BKG-/)).toBeVisible();
 });
 
 test('signed-out visitors are sent to sign-in and come back to the page they asked for', async ({ page }) => {
-  await page.goto('/bookings');
+  await page.goto('/bookings', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('#username')).toBeVisible();
   await page.locator('#username').fill(users.renter.email);
   await page.locator('#password').fill(process.env.E2E_USER_PASSWORD ?? 'Password123!');
@@ -55,7 +55,7 @@ test("an owner cannot see or accept bookings for another owner's equipment", asy
   await expect(page.getByText('Loading bookings…')).toHaveCount(0);
   await expect(page.locator('article', { hasText: title })).toHaveCount(0);
 
-  await page.goto(`/bookings/${bookingId}`);
+  await page.goto(`/bookings/${bookingId}`, { waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page.getByText(/^Booking BKG-/)).toHaveCount(0);
 

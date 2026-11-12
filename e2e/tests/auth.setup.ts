@@ -8,7 +8,7 @@ import { allFixedUsers, authFile, env } from '../support/env';
  */
 for (const user of allFixedUsers()) {
   setup(`sign in as ${user.email}`, async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.locator('#btn-header-login').click();
     await page.locator('#username').fill(user.email);
     await page.locator('#password').fill(env.password);

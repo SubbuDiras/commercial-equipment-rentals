@@ -9,7 +9,7 @@ export class ProfilePage {
   }
 
   async open(): Promise<void> {
-    await this.page.goto('/profile');
+    await this.page.goto('/profile', { waitUntil: 'domcontentloaded' });
     await expect(this.page.getByRole('heading', { name: 'My profile' })).toBeVisible();
   }
 

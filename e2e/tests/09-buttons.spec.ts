@@ -27,7 +27,7 @@ test('renter: catalogue search, clear, category page, and an incomplete booking 
   await expect(catalogue.cards.first()).toBeVisible();
 
   const { equipmentId } = await freshListing();
-  await page.goto(`/equipment/${equipmentId}/book`);
+  await page.goto(`/equipment/${equipmentId}/book`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Request booking' }).click();
   await expect(page.getByRole('alert')).toHaveText('Please check the highlighted fields: Start, End.');
   await page.getByLabel('Start').fill('2030-01-05T09:00');
@@ -172,11 +172,11 @@ test('admin: KYC tabs, documents, payout ID check, metrics and disputes pages', 
   await verified.getByRole('button', { name: 'Save' }).click();
   await expect(admin.getByRole('alert')).toContainText('Enter a Razorpay linked account ID');
 
-  await admin.goto('/admin');
+  await admin.goto('/admin', { waitUntil: 'domcontentloaded' });
   await admin.getByRole('button', { name: 'Refresh' }).click();
   await expect(admin.locator('.alert-error')).toHaveCount(0);
 
-  await admin.goto('/admin/disputes');
+  await admin.goto('/admin/disputes', { waitUntil: 'domcontentloaded' });
   await expect(admin.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(admin.locator('.alert-error')).toHaveCount(0);
 });

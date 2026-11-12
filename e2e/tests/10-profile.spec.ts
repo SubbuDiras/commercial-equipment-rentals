@@ -15,11 +15,11 @@ test('an account with the owner role but no owner details is told how to finish,
   await expect(notice).toContainText('business and payout details are not on file yet');
   await expect(page.getByRole('button', { name: 'Save draft' })).toHaveCount(0);
 
-  await page.goto('/owner/bookings');
+  await page.goto('/owner/bookings', { waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('status').filter({ hasText: 'Finish setting up your owner account' })).toBeVisible();
   await expect(page.getByRole('tab')).toHaveCount(0);
 
-  await page.goto('/profile');
+  await page.goto('/profile', { waitUntil: 'domcontentloaded' });
   const owner = page.getByRole('region', { name: 'Equipment owner' });
   await expect(owner).toContainText('business and payout details are not on file yet');
   await expect(owner.getByRole('link', { name: 'Become an owner' })).toHaveCount(0);
@@ -77,7 +77,7 @@ test('a user opens their profile from the header, and edits their name and phone
 
 test('a user adds, changes and removes a profile photo, and the header shows it', async ({ browser }) => {
   const page = await register(browser, { email: uniqueEmail('photo'), firstName: 'Fay', lastName: 'Photo' });
-  await page.goto('/profile');
+  await page.goto('/profile', { waitUntil: 'domcontentloaded' });
   const details = page.getByRole('region', { name: 'Personal details' });
   const header = page.getByRole('link', { name: 'My profile' });
   await expect(details).toContainText('FP'); // initials until there is a photo

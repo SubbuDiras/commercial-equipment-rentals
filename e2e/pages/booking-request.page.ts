@@ -14,7 +14,7 @@ export class BookingRequestPage {
   }
 
   async open(equipmentId: string): Promise<void> {
-    await this.page.goto(`/equipment/${equipmentId}/book`);
+    await this.page.goto(`/equipment/${equipmentId}/book`, { waitUntil: 'domcontentloaded' });
   }
 
   async fillPeriod(start: Date, days: number): Promise<void> {

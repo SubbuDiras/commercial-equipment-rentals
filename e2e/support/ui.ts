@@ -13,7 +13,7 @@ export async function signedInPage(browser: Browser, email: string, path = '/'):
   const context = await browser.newContext(existsSync(saved) ? { storageState: saved } : {});
   const page = await context.newPage();
   // Start from the public catalogue: a protected path would send us to Keycloak before the header renders.
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.locator('#btn-header-login').click();
   const signOut = page.getByRole('button', { name: 'Sign Out' });
   const username = page.locator('#username');
@@ -25,7 +25,7 @@ export async function signedInPage(browser: Browser, email: string, path = '/'):
   }
   await expect(signOut).toBeVisible();
   if (path !== '/') {
-    await page.goto(path);
+    await page.goto(path, { waitUntil: 'domcontentloaded' });
   }
   return page;
 }
@@ -34,7 +34,7 @@ export async function signedInPage(browser: Browser, email: string, path = '/'):
 export async function register(browser: Browser, user: TestUser): Promise<Page> {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.locator('#btn-header-login').click();
   await page.getByRole('link', { name: /register/i }).click();
   const username = page.locator('#username');
@@ -54,7 +54,7 @@ export async function register(browser: Browser, user: TestUser): Promise<Page> 
 /** Signs out and back in, so the token carries roles granted since the last sign-in. */
 export async function signInAgain(page: Page, email: string): Promise<void> {
   await page.getByRole('button', { name: 'Sign Out' }).click();
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.locator('#btn-header-login').click();
   const username = page.locator('#username');
   if (await username.isVisible()) {

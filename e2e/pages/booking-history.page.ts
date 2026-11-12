@@ -5,7 +5,7 @@ export class BookingHistoryPage {
   constructor(readonly page: Page) {}
 
   async open(): Promise<void> {
-    await this.page.goto('/bookings');
+    await this.page.goto('/bookings', { waitUntil: 'domcontentloaded' });
     await expect(this.page.getByRole('heading', { name: 'My bookings' })).toBeVisible();
     await expect(this.page.getByText('Loading your booking history…')).toHaveCount(0);
   }

@@ -7,7 +7,7 @@ export class OwnerBookingsPage {
   constructor(readonly page: Page) {}
 
   async open(tab: Tab = 'Requests'): Promise<void> {
-    await this.page.goto('/owner/bookings');
+    await this.page.goto('/owner/bookings', { waitUntil: 'domcontentloaded' });
     await this.showTab(tab);
   }
 

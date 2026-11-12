@@ -23,7 +23,7 @@ export class OwnerListingsPage {
   }
 
   async open(): Promise<void> {
-    await this.page.goto('/owner/equipment');
+    await this.page.goto('/owner/equipment', { waitUntil: 'domcontentloaded' });
     await this.waitUntilLoaded();
   }
 

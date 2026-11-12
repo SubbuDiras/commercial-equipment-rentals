@@ -130,7 +130,7 @@ test('sign-up to closed booking, through the UI', { tag: ['@smoke', '@slow'] }, 
   }
 
   // 6. The owner accepts; the renter pays with the fake Razorpay.
-  await ownerPage.goto('/owner/bookings');
+  await ownerPage.goto('/owner/bookings', { waitUntil: 'domcontentloaded' });
   await ownerPage.locator('article', { hasText: title }).getByRole('button', { name: 'Accept' }).click();
   await expect(ownerPage.getByText(/Accepted BKG-/)).toBeVisible();
   await renterPage.reload();
@@ -165,7 +165,7 @@ test('sign-up to closed booking, through the UI', { tag: ['@smoke', '@slow'] }, 
   await renterPage.reload();
   await review(renterPage, 4, 'Compacted well, a little noisy.');
   await expectStatus(renterPage, 'Closed');
-  await renterPage.goto(`/equipment/${listing.id}`);
+  await renterPage.goto(`/equipment/${listing.id}`, { waitUntil: 'domcontentloaded' });
   await expect(renterPage.getByText('Compacted well, a little noisy.')).toBeVisible();
   await expect(renterPage.getByText('Returned clean and on time.')).toHaveCount(0);
 

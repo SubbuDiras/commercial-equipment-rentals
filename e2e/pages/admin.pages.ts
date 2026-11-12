@@ -5,7 +5,7 @@ export class AdminOwnersPage {
   constructor(readonly page: Page) {}
 
   async open(): Promise<void> {
-    await this.page.goto('/admin/owners');
+    await this.page.goto('/admin/owners', { waitUntil: 'domcontentloaded' });
     await expect(this.page.getByText('Loading owners…')).toHaveCount(0);
   }
 
@@ -26,7 +26,7 @@ export class AdminListingsPage {
   constructor(readonly page: Page) {}
 
   async open(): Promise<void> {
-    await this.page.goto('/admin/listings');
+    await this.page.goto('/admin/listings', { waitUntil: 'domcontentloaded' });
   }
 
   pending(title: string): Locator {
@@ -59,7 +59,7 @@ export class AdminDisputesPage {
 
   /** Opens the claim for the listing with this unique title. */
   async openClaim(title: string): Promise<void> {
-    await this.page.goto('/admin/disputes');
+    await this.page.goto('/admin/disputes', { waitUntil: 'domcontentloaded' });
     await this.page.getByRole('link', { name: new RegExp(title) }).click();
   }
 

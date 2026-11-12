@@ -21,13 +21,13 @@ async function expectAccessible(page: Page, ready: string | RegExp | Locator): P
 
 test.describe('accessibility', { tag: '@a11y' }, () => {
   test('catalogue', async ({ page }) => {
-    await page.goto('/equipment');
+    await page.goto('/equipment', { waitUntil: 'domcontentloaded' });
     await expectAccessible(page, 'Equipment catalogue');
   });
 
   test('equipment details', async ({ page }) => {
     const { equipmentId, title } = await freshListing();
-    await page.goto(`/equipment/${equipmentId}`);
+    await page.goto(`/equipment/${equipmentId}`, { waitUntil: 'domcontentloaded' });
     await expectAccessible(page, title);
   });
 
@@ -51,16 +51,16 @@ test.describe('accessibility', { tag: '@a11y' }, () => {
   test('owner listings and bookings', async ({ browser }) => {
     const page = await signedInPage(browser, users.owner.email, '/owner/equipment');
     await expectAccessible(page, /^Your listings \(\d+\)$/);
-    await page.goto('/owner/bookings');
+    await page.goto('/owner/bookings', { waitUntil: 'domcontentloaded' });
     await expectAccessible(page, 'Bookings for my equipment');
   });
 
   test('admin queues', async ({ browser }) => {
     const page = await signedInPage(browser, users.admin.email, '/admin/owners');
     await expectAccessible(page, 'Owner KYC');
-    await page.goto('/admin/listings');
+    await page.goto('/admin/listings', { waitUntil: 'domcontentloaded' });
     await expectAccessible(page, /listing/i);
-    await page.goto('/admin/disputes');
+    await page.goto('/admin/disputes', { waitUntil: 'domcontentloaded' });
     await expectAccessible(page, /claim/i);
   });
 });
